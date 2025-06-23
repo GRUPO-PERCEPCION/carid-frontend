@@ -1,8 +1,7 @@
-
 import { useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Streaming, Video, VideoOff, Settings, Wifi } from "lucide-react";
+import { ArrowLeft, Video, VideoOff, Settings, Wifi } from "lucide-react";
 import { Link } from "react-router-dom";
 
 const StreamingRecognition = () => {
@@ -51,7 +50,7 @@ const StreamingRecognition = () => {
             </Link>
             <div className="flex items-center space-x-3">
               <div className="w-8 h-8 bg-gradient-to-r from-purple-500 to-purple-600 rounded-lg flex items-center justify-center">
-                <Streaming className="w-5 h-5 text-white" />
+                <Video className="w-5 h-5 text-white" />
               </div>
               <span className="text-lg font-bold text-white">Streaming en Tiempo Real</span>
             </div>
@@ -209,7 +208,7 @@ const StreamingRecognition = () => {
                 
                 {detections.length === 0 ? (
                   <div className="text-center py-8">
-                    <Streaming className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+                    <Video className="w-12 h-12 text-gray-400 mx-auto mb-3" />
                     <p className="text-gray-400">Esperando detecciones...</p>
                   </div>
                 ) : (

@@ -1,33 +1,64 @@
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Image, Upload, Zap, Target } from "lucide-react";
+import { ArrowLeft, Upload, Image, Zap, Eye, Download } from "lucide-react";
 import { Link } from "react-router-dom";
 
 const ImageRecognition = () => {
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [preview, setPreview] = useState<string | null>(null);
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [results, setResults] = useState<Array<{plate: string, confidence: number, bbox: number[]}>>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
-      setSelectedFile(file);
       const reader = new FileReader();
       reader.onload = (e) => {
-        setPreview(e.target?.result as string);
+        setSelectedImage(e.target?.result as string);
+        setResults([]);
       };
       reader.readAsDataURL(file);
     }
   };
 
-  const handleProcess = () => {
+  const handleProcess = async () => {
+    if (!selectedImage) return;
+    
     setIsProcessing(true);
-    // Simulate processing
-    setTimeout(() => {
-      setIsProcessing(false);
-    }, 3000);
+    
+    // Simulate processing delay
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    // Simulate detection results
+    const mockResults = [
+      { plate: "ABC-123", confidence: 97.8, bbox: [150, 200, 300, 250] },
+      { plate: "XYZ-789", confidence: 95.2, bbox: [400, 180, 550, 230] }
+    ];
+    
+    setResults(mockResults);
+    setIsProcessing(false);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+      const file = files[0];
+      if (file.type.startsWith('image/')) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          setSelectedImage(e.target?.result as string);
+          setResults([]);
+        };
+        reader.readAsDataURL(file);
+      }
+    }
   };
 
   return (
@@ -51,7 +82,7 @@ const ImageRecognition = () => {
       </header>
 
       <div className="container mx-auto px-6 py-12">
-        <div className="max-w-4xl mx-auto">
+        <div className="max-w-6xl mx-auto">
           {/* Title */}
           <div className="text-center mb-8">
             <h1 className="text-3xl font-bold text-white mb-2">Reconocimiento por Imagen</h1>
@@ -61,34 +92,50 @@ const ImageRecognition = () => {
           <div className="grid lg:grid-cols-2 gap-8">
             {/* Upload Section */}
             <Card className="bg-white/10 border-white/20 backdrop-blur-sm">
-              <CardContent className="p-8">
-                <h3 className="text-xl font-bold text-white mb-6">Subir Imagen</h3>
+              <CardContent className="p-6">
+                <h3 className="text-lg font-bold text-white mb-4">Subir Imagen</h3>
                 
-                {!preview ? (
-                  <div className="border-2 border-dashed border-white/30 rounded-lg p-12 text-center hover:border-blue-400 transition-colors">
+                {!selectedImage ? (
+                  <div
+                    className="border-2 border-dashed border-white/30 rounded-lg p-8 text-center hover:border-white/50 transition-colors cursor-pointer"
+                    onDragOver={handleDragOver}
+                    onDrop={handleDrop}
+                    onClick={() => fileInputRef.current?.click()}
+                  >
                     <Upload className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-                    <p className="text-white mb-2">Arrastra tu imagen aquí o haz clic para seleccionar</p>
-                    <p className="text-gray-400 text-sm mb-4">Formatos soportados: JPG, PNG, WEBP</p>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={handleFileSelect}
-                      className="hidden"
-                      id="file-input"
-                    />
-                    <label htmlFor="file-input">
-                      <Button className="bg-blue-600 hover:bg-blue-700 text-white cursor-pointer">
-                        Seleccionar Imagen
-                      </Button>
-                    </label>
+                    <p className="text-white mb-2">Arrastra y suelta una imagen aquí</p>
+                    <p className="text-gray-400 text-sm mb-4">o haz clic para seleccionar</p>
+                    <Button className="bg-blue-600 hover:bg-blue-700 text-white">
+                      Seleccionar Archivo
+                    </Button>
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    <div className="relative rounded-lg overflow-hidden">
-                      <img src={preview} alt="Preview" className="w-full h-64 object-cover" />
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent"></div>
+                    <div className="relative bg-black rounded-lg overflow-hidden">
+                      <img
+                        src={selectedImage}
+                        alt="Imagen cargada"
+                        className="w-full h-64 object-contain"
+                      />
+                      {results.map((result, index) => (
+                        <div
+                          key={index}
+                          className="absolute border-2 border-green-400 bg-green-400/20"
+                          style={{
+                            left: `${(result.bbox[0] / 800) * 100}%`,
+                            top: `${(result.bbox[1] / 600) * 100}%`,
+                            width: `${((result.bbox[2] - result.bbox[0]) / 800) * 100}%`,
+                            height: `${((result.bbox[3] - result.bbox[1]) / 600) * 100}%`
+                          }}
+                        >
+                          <div className="absolute -top-6 left-0 bg-green-400 text-black px-2 py-1 text-xs rounded">
+                            {result.plate} ({result.confidence.toFixed(1)}%)
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                    <div className="flex space-x-4">
+                    
+                    <div className="flex space-x-3">
                       <Button
                         onClick={handleProcess}
                         disabled={isProcessing}
@@ -96,81 +143,107 @@ const ImageRecognition = () => {
                       >
                         {isProcessing ? (
                           <>
-                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                            <Zap className="w-4 h-4 mr-2 animate-spin" />
                             Procesando...
                           </>
                         ) : (
                           <>
-                            <Zap className="w-4 h-4 mr-2" />
+                            <Eye className="w-4 h-4 mr-2" />
                             Procesar Imagen
                           </>
                         )}
                       </Button>
+                      
                       <Button
-                        onClick={() => {
-                          setPreview(null);
-                          setSelectedFile(null);
-                        }}
+                        onClick={() => fileInputRef.current?.click()}
                         variant="outline"
                         className="border-white/20 text-white hover:bg-white/10"
                       >
-                        Cambiar
+                        <Upload className="w-4 h-4" />
                       </Button>
                     </div>
                   </div>
                 )}
+
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleImageUpload}
+                  className="hidden"
+                />
+
+                <div className="mt-6 bg-white/5 rounded-lg p-4">
+                  <h4 className="text-white font-semibold mb-2 text-sm">Formatos Soportados</h4>
+                  <div className="flex flex-wrap gap-2">
+                    {['JPG', 'PNG', 'WEBP', 'BMP', 'TIFF'].map((format) => (
+                      <span key={format} className="px-2 py-1 bg-blue-600/20 text-blue-400 rounded text-xs">
+                        {format}
+                      </span>
+                    ))}
+                  </div>
+                </div>
               </CardContent>
             </Card>
 
             {/* Results Section */}
             <Card className="bg-white/10 border-white/20 backdrop-blur-sm">
-              <CardContent className="p-8">
-                <h3 className="text-xl font-bold text-white mb-6">Resultados</h3>
+              <CardContent className="p-6">
+                <h3 className="text-lg font-bold text-white mb-4">Resultados de Detección</h3>
                 
-                {!isProcessing && !preview ? (
+                {results.length === 0 ? (
                   <div className="text-center py-12">
-                    <Target className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-                    <p className="text-gray-400">Los resultados aparecerán aquí una vez que subas y proceses una imagen</p>
-                  </div>
-                ) : isProcessing ? (
-                  <div className="text-center py-12">
-                    <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-400 mx-auto mb-4"></div>
-                    <p className="text-white mb-2">Procesando imagen...</p>
-                    <p className="text-gray-400 text-sm">Detectando matrículas y reconociendo caracteres</p>
+                    <Eye className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+                    <p className="text-gray-400 mb-2">No hay resultados aún</p>
+                    <p className="text-gray-500 text-sm">Sube una imagen y presiona "Procesar" para ver los resultados</p>
                   </div>
                 ) : (
-                  <div className="space-y-6">
-                    <div className="bg-white/5 rounded-lg p-4">
-                      <h4 className="text-white font-semibold mb-3">Matrículas Detectadas</h4>
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between p-3 bg-green-500/20 rounded-lg border border-green-500/30">
-                          <span className="text-white font-mono text-lg">ABC-123</span>
-                          <span className="text-green-400 text-sm">Confianza: 98.5%</span>
+                  <div className="space-y-4">
+                    {results.map((result, index) => (
+                      <div key={index} className="bg-white/5 rounded-lg p-4 border border-white/10">
+                        <div className="flex items-center justify-between mb-3">
+                          <span className="text-white font-mono text-xl">{result.plate}</span>
+                          <span className="text-green-400 text-sm font-semibold">
+                            {result.confidence.toFixed(1)}% confianza
+                          </span>
+                        </div>
+                        
+                        <div className="space-y-2">
+                          <div className="flex justify-between text-sm">
+                            <span className="text-gray-400">Coordenadas:</span>
+                            <span className="text-white font-mono">
+                              [{result.bbox.join(', ')}]
+                            </span>
+                          </div>
+                          
+                          <div className="w-full bg-white/10 rounded-full h-2 overflow-hidden">
+                            <div 
+                              className="bg-gradient-to-r from-green-500 to-blue-500 h-2 rounded-full transition-all duration-500"
+                              style={{ width: `${result.confidence}%` }}
+                            ></div>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                    
-                    <div className="bg-white/5 rounded-lg p-4">
-                      <h4 className="text-white font-semibold mb-3">Información del Procesamiento</h4>
-                      <div className="space-y-2 text-sm">
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">Tiempo de detección:</span>
-                          <span className="text-white">15ms</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">Tiempo de OCR:</span>
-                          <span className="text-white">12ms</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">Tiempo total:</span>
-                          <span className="text-green-400">27ms</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">Región detectada:</span>
-                          <span className="text-white">1</span>
+                    ))}
+
+                    {results.length > 0 && (
+                      <div className="mt-6 p-4 bg-gradient-to-r from-blue-600/10 to-green-600/10 rounded-lg border border-white/10">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <h4 className="text-white font-semibold">Resumen del Análisis</h4>
+                            <p className="text-gray-400 text-sm">
+                              {results.length} matrícula{results.length !== 1 ? 's' : ''} detectada{results.length !== 1 ? 's' : ''}
+                            </p>
+                          </div>
+                          <Button
+                            className="bg-green-600 hover:bg-green-700 text-white"
+                          >
+                            <Download className="w-4 h-4 mr-2" />
+                            Exportar
+                          </Button>
                         </div>
                       </div>
-                    </div>
+                    )}
                   </div>
                 )}
               </CardContent>
@@ -178,25 +251,25 @@ const ImageRecognition = () => {
           </div>
 
           {/* Technical Info */}
-          <Card className="bg-white/5 border-white/10 backdrop-blur-sm mt-8">
+          <Card className="bg-gradient-to-r from-blue-600/10 to-green-600/10 rounded-2xl backdrop-blur-sm border border-white/10 mt-8">
             <CardContent className="p-6">
-              <h3 className="text-lg font-bold text-white mb-4">Información Técnica</h3>
-              <div className="grid md:grid-cols-4 gap-4 text-sm">
-                <div className="text-center">
-                  <div className="text-blue-400 font-semibold">Modelo Detector</div>
-                  <div className="text-gray-300">YOLOv8-L</div>
+              <h3 className="text-lg font-bold text-white mb-4 text-center">Información Técnica</h3>
+              <div className="grid md:grid-cols-4 gap-4 text-center">
+                <div className="bg-white/5 rounded-lg p-4">
+                  <div className="text-blue-400 font-semibold text-sm">Modelo</div>
+                  <div className="text-white">YOLOv8-L</div>
                 </div>
-                <div className="text-center">
-                  <div className="text-green-400 font-semibold">Modelo OCR</div>
-                  <div className="text-gray-300">YOLOv8-M</div>
+                <div className="bg-white/5 rounded-lg p-4">
+                  <div className="text-green-400 font-semibold text-sm">Inferencia</div>
+                  <div className="text-white">≈30ms</div>
                 </div>
-                <div className="text-center">
-                  <div className="text-yellow-400 font-semibold">Clases</div>
-                  <div className="text-gray-300">36 caracteres</div>
+                <div className="bg-white/5 rounded-lg p-4">
+                  <div className="text-purple-400 font-semibold text-sm">Precisión</div>
+                  <div className="text-white">96.8%</div>
                 </div>
-                <div className="text-center">
-                  <div className="text-purple-400 font-semibold">Precisión</div>
-                  <div className="text-gray-300">>95%</div>
+                <div className="bg-white/5 rounded-lg p-4">
+                  <div className="text-yellow-400 font-semibold text-sm">Clases</div>
+                  <div className="text-white">36</div>
                 </div>
               </div>
             </CardContent>
