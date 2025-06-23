@@ -249,31 +249,6 @@ const ImageRecognition = () => {
               </CardContent>
             </Card>
           </div>
-
-          {/* Technical Info */}
-          <Card className="bg-gradient-to-r from-blue-600/10 to-green-600/10 rounded-2xl backdrop-blur-sm border border-white/10 mt-8">
-            <CardContent className="p-6">
-              <h3 className="text-lg font-bold text-white mb-4 text-center">Información Técnica</h3>
-              <div className="grid md:grid-cols-4 gap-4 text-center">
-                <div className="bg-white/5 rounded-lg p-4">
-                  <div className="text-blue-400 font-semibold text-sm">Modelo</div>
-                  <div className="text-white">YOLOv8-L</div>
-                </div>
-                <div className="bg-white/5 rounded-lg p-4">
-                  <div className="text-green-400 font-semibold text-sm">Inferencia</div>
-                  <div className="text-white">≈30ms</div>
-                </div>
-                <div className="bg-white/5 rounded-lg p-4">
-                  <div className="text-purple-400 font-semibold text-sm">Precisión</div>
-                  <div className="text-white">96.8%</div>
-                </div>
-                <div className="bg-white/5 rounded-lg p-4">
-                  <div className="text-yellow-400 font-semibold text-sm">Clases</div>
-                  <div className="text-white">36</div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
         </div>
       </div>
     </div>

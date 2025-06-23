@@ -19,7 +19,7 @@ const Recognition = () => {
               <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-green-500 rounded-lg flex items-center justify-center">
                 <Target className="w-5 h-5 text-white" />
               </div>
-              <span className="text-lg font-bold text-white">ALPR-Perú</span>
+              <span className="text-lg font-bold text-white">CARID</span>
             </div>
           </div>
         </div>
@@ -112,33 +112,6 @@ const Recognition = () => {
               </CardContent>
             </Card>
           </Link>
-        </div>
-
-        {/* Technical Specs */}
-        <div className="mt-16 bg-gradient-to-r from-blue-600/10 to-green-600/10 rounded-2xl p-8 backdrop-blur-sm border border-white/10 max-w-4xl mx-auto">
-          <h3 className="text-2xl font-bold text-white mb-6 text-center">Especificaciones Técnicas</h3>
-          <div className="grid md:grid-cols-2 gap-8">
-            <div className="space-y-4">
-              <div className="flex justify-between items-center p-3 bg-white/5 rounded-lg">
-                <span className="text-gray-300">Modelo de Detección:</span>
-                <span className="text-blue-400 font-semibold">YOLOv8-L</span>
-              </div>
-              <div className="flex justify-between items-center p-3 bg-white/5 rounded-lg">
-                <span className="text-gray-300">Modelo OCR:</span>
-                <span className="text-green-400 font-semibold">YOLOv8-M</span>
-              </div>
-            </div>
-            <div className="space-y-4">
-              <div className="flex justify-between items-center p-3 bg-white/5 rounded-lg">
-                <span className="text-gray-300">Clases de Caracteres:</span>
-                <span className="text-yellow-400 font-semibold">36</span>
-              </div>
-              <div className="flex justify-between items-center p-3 bg-white/5 rounded-lg">
-                <span className="text-gray-300">Tiempo de Inferencia:</span>
-                <span className="text-green-400 font-semibold">≈30ms</span>
-              </div>
-            </div>
-          </div>
         </div>
       </div>
     </div>

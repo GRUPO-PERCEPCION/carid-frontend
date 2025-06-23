@@ -15,7 +15,7 @@ const Index = () => {
               <div className="w-10 h-10 bg-gradient-to-r from-blue-500 to-green-500 rounded-lg flex items-center justify-center">
                 <Target className="w-6 h-6 text-white" />
               </div>
-              <span className="text-xl font-bold text-white">ALPR-Perú</span>
+              <span className="text-xl font-bold text-white">CARID</span>
             </div>
             <Link to="/recognition">
               <Button className="bg-gradient-to-r from-blue-600 to-green-600 hover:from-blue-700 hover:to-green-700 text-white border-0">
@@ -47,9 +47,6 @@ const Index = () => {
                 <ArrowRight className="ml-2 w-5 h-5" />
               </Button>
             </Link>
-            <Button size="lg" variant="outline" className="border-white/20 text-white hover:bg-white/10">
-              Ver Documentación
-            </Button>
           </div>
         </div>
       </section>
@@ -176,7 +173,7 @@ const Index = () => {
       {/* Footer */}
       <footer className="bg-black/20 border-t border-white/10 py-8">
         <div className="container mx-auto px-6 text-center text-gray-400">
-          <p>&copy; 2024 ALPR-Perú. Sistema de reconocimiento automático de matrículas.</p>
+          <p>&copy; {new Date().getFullYear()} CARID. Sistema de reconocimiento automático de matrículas.</p>
         </div>
       </footer>
     </div>
