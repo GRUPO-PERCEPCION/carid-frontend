@@ -1,4 +1,4 @@
-
+// src/App.tsx - Versión sin StreamingPage
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -14,23 +14,22 @@ import NotFound from "./pages/NotFound";
 const queryClient = new QueryClient();
 
 const App = () => (
-  <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <Toaster />
-      <Sonner />
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Index />} />
-          <Route path="/recognition" element={<Recognition />} />
-          <Route path="/recognition/image" element={<ImageRecognition />} />
-          <Route path="/recognition/video" element={<VideoRecognition />} />
-          <Route path="/recognition/streaming" element={<StreamingRecognition />} />
-          {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-      </BrowserRouter>
-    </TooltipProvider>
-  </QueryClientProvider>
+    <QueryClientProvider client={queryClient}>
+      <TooltipProvider>
+        <Toaster />
+        <Sonner />
+        <BrowserRouter>
+          <Routes>
+            <Route path="/" element={<Index />} />
+            <Route path="/recognition" element={<Recognition />} />
+            <Route path="/recognition/image" element={<ImageRecognition />} />
+            <Route path="/recognition/video" element={<VideoRecognition />} />
+            <Route path="/recognition/streaming" element={<StreamingRecognition />} />
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </BrowserRouter>
+      </TooltipProvider>
+    </QueryClientProvider>
 );
 
 export default App;
