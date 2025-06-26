@@ -386,8 +386,13 @@ const VideoRecognition = () => {
                         <div className="bg-white/5 rounded-lg p-4">
                           <div className="flex items-center space-x-3">
                             <Video className="w-8 h-8 text-green-400" />
-                            <div className="flex-1">
-                              <p className="text-white font-medium text-sm">{selectedFile.name}</p>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-white font-medium text-sm truncate"
+                              title={selectedFile.name}
+                              style={{ maxWidth: "180px" }}
+                              >
+                                {selectedFile.name}
+                              </p>
                               <p className="text-gray-400 text-xs">{(selectedFile.size / 1024 / 1024).toFixed(2)} MB</p>
                             </div>
                           </div>
@@ -438,9 +443,18 @@ const VideoRecognition = () => {
                               setResults([]);
                               setProgress(0);
                             }}
-                            variant="outline"
                             size="sm"
-                            className="w-full border-white/20 text-white hover:bg-white/10"
+                            className={`
+                              w-full flex items-center justify-center
+                              bg-white/10 text-white border border-white/30
+                              transition
+                              hover:bg-blue-600/70 hover:text-white hover:border-blue-400
+                              active:scale-95
+                              font-semibold
+                              shadow-md
+                              duration-200
+                            `}
+                            style={{ minHeight: "38px" }}
                         >
                           Cambiar Video
                         </Button>
@@ -501,7 +515,7 @@ const VideoRecognition = () => {
                               onTimeUpdate={handleVideoTimeUpdate}
                               onPlay={() => setIsPlaying(true)}
                               onPause={() => setIsPlaying(false)}
-                              controls
+                              tabIndex={0}
                           />
                           {annotatedVideoUrl && (
                               <div className="absolute top-2 right-2 bg-green-600/80 text-white px-2 py-1 rounded text-xs">

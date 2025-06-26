@@ -310,8 +310,17 @@ const ImageRecognition = () => {
 
                         <Button
                             onClick={() => fileInputRef.current?.click()}
-                            variant="outline"
-                            className="w-full border-white/20 text-white hover:bg-white/10"
+                            className={`
+                              w-full flex items-center justify-center
+                              bg-white/10 text-white border border-white/30
+                              transition
+                              hover:bg-blue-600/70 hover:text-white hover:border-blue-400
+                              active:scale-95
+                              font-semibold
+                              shadow-md
+                              duration-200
+                            `}
+                            style={{ minHeight: "44px" }}
                         >
                           <Upload className="w-4 h-4 mr-2" />
                           Cambiar Imagen
