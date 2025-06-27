@@ -1,4 +1,3 @@
-// src/types/streaming.ts - Tipos TypeScript sin 'any'
 export interface StreamingFrame {
     image: string;
     frameNumber: number;
@@ -69,9 +68,10 @@ export type StreamingStatus =
     | 'stopped'
     | 'error';
 
+// 🔧 INTERFACES CORREGIDAS PARA MENSAJES WEBSOCKET
 export interface WebSocketMessage {
     type: string;
-    data?: StreamingUpdateData | SessionData | ErrorData;
+    data?: StreamingUpdateData | SessionData | ErrorData | Record<string, unknown>;
     error?: string;
     timestamp?: number;
 }
@@ -181,7 +181,8 @@ export interface StreamingOptions {
     enable_thumbnails?: boolean;
 }
 
-export type MessageHandler<T = unknown> = (data: T) => void;
+// 🔧 TIPO CORREGIDO PARA MESSAGE HANDLER
+export type MessageHandler<T = Record<string, unknown>> = (data: T) => void;
 
 // Tipos para respuestas del servidor
 export interface StreamingStartResponse {
@@ -233,11 +234,55 @@ export interface StreamingActions {
     requestStatus: () => void;
     downloadResults: (format: 'json' | 'csv') => Promise<void>;
     sendMessage: (message: Record<string, unknown>) => void;
-    onMessage: <T = unknown>(messageType: string, handler: MessageHandler<T>) => () => void;
+    onMessage: <T = Record<string, unknown>>(messageType: string, handler: MessageHandler<T>) => () => void;
     clearError: () => void;
 }
 
 // Tipo principal del hook
 export interface UseStreamingWebSocketReturn extends StreamingState, StreamingStateHelpers, StreamingActions {
     connectionStatus: 'connected' | 'disconnected';
+}
+
+// 🔧 TIPOS ADICIONALES PARA RESOLVER ERRORES ESPECÍFICOS
+export interface UploadProgressData {
+    progress: number;
+}
+
+export interface SystemMessageData {
+    type: 'info' | 'warning' | 'error';
+    title?: string;
+    message: string;
+}
+
+// 🔧 HELPER TYPES PARA CASTING SEGURO
+export interface GenericWebSocketData {
+    frame_info?: {
+        frame_number?: number;
+        timestamp?: number;
+        processing_time?: number;
+        success?: boolean;
+    };
+    current_detections?: unknown[];
+    progress?: {
+        progress_percent?: number;
+        processed_frames?: number;
+        total_frames?: number;
+        processing_speed?: number;
+    };
+    detection_summary?: {
+        best_plates?: unknown[];
+    };
+}
+
+// 🔧 TYPE GUARDS PARA VALIDACIÓN SEGURA
+export function isStreamingUpdateData(data: unknown): data is StreamingUpdateData {
+    return typeof data === 'object' && data !== null;
+}
+
+export function isUploadProgressData(data: unknown): data is UploadProgressData {
+    return typeof data === 'object' && data !== null && 'progress' in data;
+}
+
+export function isSystemMessageData(data: unknown): data is SystemMessageData {
+    return typeof data === 'object' && data !== null && 'message' in data;
 }

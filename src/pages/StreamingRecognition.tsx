@@ -1,4 +1,3 @@
-// src/pages/StreamingRecognition.tsx - Versión completa conectada a la API
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -6,12 +5,20 @@ import { toast } from "@/components/ui/sonner";
 import {
   ArrowLeft, Video, VideoOff, Settings, Wifi, WifiOff, Upload,
   Play, Pause, Square, Download, Eye, AlertCircle, CheckCircle,
-  Activity, Target, Zap, RefreshCw, Monitor, Clock
+  Activity, Target, Zap, RefreshCw, Monitor, Clock, Terminal
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useStreamingWebSocket } from "../hooks/useStreamingWebSocket";
 import { streamingApi } from "../services/streamingApi";
-import type { StreamingStatus } from "../types/streaming";
+import { StreamingDebugConsole } from "../components/StreamingDebugConsole";
+import type {
+  StreamingStatus,
+  UploadProgressData,
+  SystemMessageData,
+  GenericWebSocketData,
+  isUploadProgressData,
+  isSystemMessageData
+} from "../types/streaming";
 
 interface StatusInfo {
   color: string;
@@ -20,15 +27,56 @@ interface StatusInfo {
   bgColor: string;
 }
 
+interface ServerHealth {
+  status: 'healthy' | 'warning' | 'error';
+  timestamp: number;
+  service: string;
+  version: string;
+  issues: string[];
+  sessions: {
+    active: number;
+    max: number;
+    capacity_usage: number;
+  };
+  models: {
+    loaded: boolean;
+    device: string;
+  };
+  capabilities: {
+    websocket_streaming: boolean;
+    real_time_processing: boolean;
+    video_upload: boolean;
+    session_management: boolean;
+  };
+}
+
+interface ActiveSession {
+  session_id: string;
+  status: string;
+  created_at: number;
+  uptime: number;
+  is_processing: boolean;
+  has_video: boolean;
+}
+
+interface StreamingSettings {
+  confidence_threshold: number;
+  frame_skip: number;
+  adaptive_quality: boolean;
+  enable_thumbnails: boolean;
+  max_duration: number;
+}
+
 const StreamingRecognition: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // 🔧 ESTADO LOCAL ADICIONAL
   const [uploadProgress, setUploadProgress] = useState<number>(0);
-  const [serverHealth, setServerHealth] = useState<any>(null);
-  const [activeSessions, setActiveSessions] = useState<any[]>([]);
+  const [serverHealth, setServerHealth] = useState<ServerHealth | null>(null);
+  const [activeSessions, setActiveSessions] = useState<ActiveSession[]>([]);
   const [showSettings, setShowSettings] = useState<boolean>(false);
-  const [streamingSettings, setStreamingSettings] = useState({
+  const [showDebugConsole, setShowDebugConsole] = useState<boolean>(true);
+  const [streamingSettings, setStreamingSettings] = useState<StreamingSettings>({
     confidence_threshold: 0.3,
     frame_skip: 2,
     adaptive_quality: true,
@@ -75,6 +123,16 @@ const StreamingRecognition: React.FC = () => {
     reconnectInterval: 3000,
     maxReconnectAttempts: 5
   });
+
+  // 🔧 FUNCIÓN DE DEBUG HELPER
+  const debugLog = useCallback((type: string, category: string, message: string, data?: unknown) => {
+    if (window.streamingDebug && window.streamingDebug[type as keyof typeof window.streamingDebug]) {
+      const debugFunction = window.streamingDebug[type as keyof typeof window.streamingDebug];
+      if (typeof debugFunction === 'function') {
+        debugFunction(category, message, data);
+      }
+    }
+  }, []);
 
   // 🎨 OBTENER INFORMACIÓN VISUAL DEL ESTADO
   const getStatusInfo = (currentStatus: StreamingStatus): StatusInfo => {
@@ -144,6 +202,8 @@ const StreamingRecognition: React.FC = () => {
   // 🔄 CARGAR INFORMACIÓN DEL SERVIDOR
   const loadServerInfo = useCallback(async () => {
     try {
+      debugLog('info', 'API', 'Cargando información del servidor');
+
       const [healthData, sessionsData] = await Promise.all([
         streamingApi.getStreamingHealth(),
         streamingApi.getActiveSessions()
@@ -151,19 +211,32 @@ const StreamingRecognition: React.FC = () => {
 
       setServerHealth(healthData);
       setActiveSessions(sessionsData.sessions || []);
+
+      debugLog('success', 'API', 'Información del servidor cargada', {
+        health: healthData.status,
+        sessions: sessionsData.sessions?.length || 0
+      });
     } catch (err) {
+      debugLog('error', 'API', 'Error cargando info del servidor', err);
       console.error('Error cargando info del servidor:', err);
     }
-  }, []);
+  }, [debugLog]);
 
   // 📁 MANEJAR SELECCIÓN DE ARCHIVO
   const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
+    debugLog('info', 'Upload', `Archivo seleccionado: ${file.name}`, {
+      name: file.name,
+      size: file.size,
+      type: file.type
+    });
+
     // Validaciones
     const validTypes = ['video/mp4', 'video/avi', 'video/mov', 'video/mkv', 'video/webm'];
     if (!validTypes.includes(file.type)) {
+      debugLog('error', 'Upload', `Formato no soportado: ${file.type}`);
       toast.error('Formato no soportado', {
         description: 'Use MP4, AVI, MOV, MKV o WebM'
       });
@@ -172,6 +245,7 @@ const StreamingRecognition: React.FC = () => {
 
     const maxSizeBytes = 150 * 1024 * 1024; // 150MB
     if (file.size > maxSizeBytes) {
+      debugLog('error', 'Upload', `Archivo muy grande: ${file.size} bytes`);
       toast.error('Archivo muy grande', {
         description: 'Máximo 150MB permitido'
       });
@@ -183,17 +257,21 @@ const StreamingRecognition: React.FC = () => {
       clearError();
       setUploadProgress(0);
 
+      debugLog('info', 'Upload', 'Iniciando proceso de streaming');
+
       toast.info('Iniciando streaming', {
         description: `Subiendo ${file.name}...`
       });
 
       await startStreaming(file, streamingSettings);
 
+      debugLog('success', 'Upload', 'Video cargado exitosamente');
       toast.success('Video cargado exitosamente', {
         description: 'El procesamiento comenzará en breve'
       });
 
     } catch (err) {
+      debugLog('error', 'Upload', 'Error iniciando streaming', err);
       console.error('Error iniciando streaming:', err);
       toast.error('Error al iniciar streaming', {
         description: err instanceof Error ? err.message : 'Error desconocido'
@@ -204,24 +282,29 @@ const StreamingRecognition: React.FC = () => {
   // 📥 MANEJAR DESCARGA
   const handleDownload = async (format: 'json' | 'csv') => {
     try {
+      debugLog('info', 'Download', `Iniciando descarga ${format.toUpperCase()}`);
       await downloadResults(format);
+      debugLog('success', 'Download', `Descarga ${format.toUpperCase()} completada`);
       toast.success(`Descarga ${format.toUpperCase()} completada`);
     } catch (err) {
+      debugLog('error', 'Download', `Error descargando ${format.toUpperCase()}`, err);
       console.error(`Error descargando ${format}:`, err);
       toast.error(`Error descargando ${format.toUpperCase()}`);
     }
   };
 
   // 🔧 MANEJAR CONFIGURACIÓN
-  const handleSettingsChange = (key: string, value: any) => {
+  const handleSettingsChange = (key: keyof StreamingSettings, value: boolean | number) => {
     setStreamingSettings(prev => ({
       ...prev,
       [key]: value
     }));
+    debugLog('info', 'Settings', `Configuración actualizada: ${key} = ${value}`);
   };
 
   // 🔄 REFRESCAR CONEXIÓN
   const handleReconnect = () => {
+    debugLog('info', 'Connection', 'Iniciando reconexión manual');
     disconnect();
     setTimeout(() => {
       connect();
@@ -234,51 +317,82 @@ const StreamingRecognition: React.FC = () => {
   // 🧹 LIMPIAR SESIÓN
   const handleClearSession = async () => {
     try {
+      debugLog('info', 'Session', 'Limpiando sesión actual');
       if (sessionId) {
         await streamingApi.disconnectSession(sessionId);
       }
       disconnect();
       toast.success('Sesión limpiada');
+      debugLog('success', 'Session', 'Sesión limpiada exitosamente');
     } catch (err) {
+      debugLog('error', 'Session', 'Error limpiando sesión', err);
       console.error('Error limpiando sesión:', err);
     }
   };
 
-  // 📊 CONFIGURAR HANDLERS DE MENSAJES PERSONALIZADOS
+  // 📊 CONFIGURAR HANDLERS DE MENSAJES PERSONALIZADOS CON TYPE GUARDS
   useEffect(() => {
     // Handler para updates de progreso de subida
-    const unsubscribeUpload = onMessage('upload_progress', (data: any) => {
-      if (data.progress !== undefined) {
+    const unsubscribeUpload = onMessage('upload_progress', (data: unknown) => {
+      if (isUploadProgressData(data) && typeof data.progress === 'number') {
         setUploadProgress(data.progress);
+        debugLog('info', 'Upload Progress', `Progreso: ${data.progress}%`);
       }
     });
 
     // Handler para mensajes de sistema
-    const unsubscribeSystem = onMessage('system_message', (data: any) => {
-      if (data.type === 'info') {
-        toast.info(data.title || 'Info', {
-          description: data.message
-        });
-      } else if (data.type === 'warning') {
-        toast.warning(data.title || 'Advertencia', {
-          description: data.message
-        });
+    const unsubscribeSystem = onMessage('system_message', (data: unknown) => {
+      if (isSystemMessageData(data)) {
+        debugLog('websocket', 'System Message', data.message, data);
+        if (data.type === 'info') {
+          toast.info(data.title || 'Info', {
+            description: data.message
+          });
+        } else if (data.type === 'warning') {
+          toast.warning(data.title || 'Advertencia', {
+            description: data.message
+          });
+        }
       }
+    });
+
+    // Handler para actualizaciones de streaming con casting seguro
+    const unsubscribeStreaming = onMessage('streaming_update', (data: unknown) => {
+      const streamingData = data as GenericWebSocketData;
+      debugLog('websocket', 'Streaming Update', 'Actualización recibida', {
+        frame: streamingData?.frame_info?.frame_number || 0,
+        detections: Array.isArray(streamingData?.current_detections) ? streamingData.current_detections.length : 0,
+        progress: streamingData?.progress?.progress_percent || 0
+      });
     });
 
     return () => {
       unsubscribeUpload();
       unsubscribeSystem();
+      unsubscribeStreaming();
     };
-  }, [onMessage]);
+  }, [onMessage, debugLog]);
 
   // 🔄 CARGAR INFO INICIAL
   useEffect(() => {
     loadServerInfo();
+    debugLog('info', 'App', 'Aplicación de streaming inicializada');
+
     // Actualizar cada 30 segundos
     const interval = setInterval(loadServerInfo, 30000);
     return () => clearInterval(interval);
-  }, [loadServerInfo]);
+  }, [loadServerInfo, debugLog]);
+
+  // 📊 LOGGING DE CAMBIOS DE ESTADO
+  useEffect(() => {
+    debugLog('info', 'State', `Estado cambiado a: ${status}`, {
+      isConnected,
+      isStreaming,
+      sessionId,
+      detections: detections.length,
+      uniquePlates: uniquePlates.length
+    });
+  }, [status, isConnected, isStreaming, sessionId, detections.length, uniquePlates.length, debugLog]);
 
   // 🎯 FORMATEAR TIEMPO
   const formatDuration = (seconds: number): string => {
@@ -287,9 +401,9 @@ const StreamingRecognition: React.FC = () => {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // 📈 CALCULAR TIEMPO ESTIMADO
+  // 📈 CALCULAR TIEMPO ESTIMADO CON VALIDACIÓN
   const getEstimatedTimeRemaining = (): string => {
-    if (progress.percent <= 0 || processingSpeed <= 0) return '...';
+    if (!progress || progress.percent <= 0 || processingSpeed <= 0) return '...';
 
     const remaining = (progress.total - progress.processed) / processingSpeed;
     return formatDuration(remaining);
@@ -297,6 +411,14 @@ const StreamingRecognition: React.FC = () => {
 
   return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-800">
+        {/* Debug Console */}
+        <div className="fixed top-20 right-4 w-96 z-40">
+          <StreamingDebugConsole
+              isVisible={showDebugConsole}
+              onToggleVisibility={() => setShowDebugConsole(!showDebugConsole)}
+          />
+        </div>
+
         {/* Header */}
         <header className="bg-black/20 backdrop-blur-sm border-b border-white/10">
           <div className="container mx-auto px-6 py-4">
@@ -314,6 +436,16 @@ const StreamingRecognition: React.FC = () => {
               </div>
 
               <div className="flex items-center space-x-4">
+                {/* Debug Console Toggle */}
+                <Button
+                    onClick={() => setShowDebugConsole(!showDebugConsole)}
+                    size="sm"
+                    variant="ghost"
+                    className="text-gray-400 hover:text-white"
+                >
+                  <Terminal className="w-4 h-4" />
+                </Button>
+
                 {/* Estado de conexión con health check */}
                 <div className={`flex items-center space-x-2 px-3 py-1 rounded-lg ${statusInfo.bgColor} border`}>
                   <StatusIcon className={`w-4 h-4 ${statusInfo.color}`} />
@@ -403,7 +535,7 @@ const StreamingRecognition: React.FC = () => {
             )}
 
             <div className="grid lg:grid-cols-3 gap-8">
-              {/* Panel de Control */}
+              {/* Panel de Control - Resto del componente igual... */}
               <div className="space-y-6">
                 {/* Upload & Control */}
                 <Card className="bg-white/10 border-white/20 backdrop-blur-sm">
