@@ -1,5 +1,6 @@
-// src/hooks/useStreamingWebSocket.ts - Hook mejorado sin 'any'
+// src/hooks/useStreamingWebSocket.tsx - Hook mejorado con integración de API
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { streamingApi } from '../services/streamingApi';
 import type {
     StreamingState,
     StreamingStatus,
@@ -11,8 +12,7 @@ import type {
     StreamingOptions,
     MessageHandler,
     UseStreamingWebSocketConfig,
-    UseStreamingWebSocketReturn,
-    StreamingStartResponse
+    UseStreamingWebSocketReturn
 } from '../types/streaming';
 
 const defaultConfig: Required<UseStreamingWebSocketConfig> = {
@@ -27,7 +27,7 @@ export const useStreamingWebSocket = (
 ): UseStreamingWebSocketReturn => {
     const finalConfig = { ...defaultConfig, ...config };
 
-    // Estado principal
+    // 🎯 ESTADO PRINCIPAL
     const [state, setState] = useState<StreamingState>({
         isConnected: false,
         isStreaming: false,
@@ -42,24 +42,25 @@ export const useStreamingWebSocket = (
         processingSpeed: 0
     });
 
-    // Referencias tipadas
+    // 📱 REFERENCIAS
     const wsRef = useRef<WebSocket | null>(null);
     const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const reconnectAttemptsRef = useRef<number>(0);
     const messageHandlersRef = useRef<Map<string, MessageHandler>>(new Map());
+    const apiServiceRef = useRef(streamingApi);
 
     // 🔌 CONECTAR WEBSOCKET
     const connect = useCallback(() => {
         const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
         try {
-            const wsUrl = `${finalConfig.wsBaseUrl}/api/v1/streaming/ws/${sessionId}`;
-            console.log('🔌 Conectando WebSocket:', wsUrl);
+            console.log('🔌 Iniciando conexión WebSocket...');
 
-            wsRef.current = new WebSocket(wsUrl);
+            // Crear WebSocket usando el servicio API
+            wsRef.current = apiServiceRef.current.createWebSocket(sessionId);
 
             wsRef.current.onopen = () => {
-                console.log('✅ WebSocket conectado');
+                console.log('✅ WebSocket conectado exitosamente');
                 setState(prev => ({
                     ...prev,
                     isConnected: true,
@@ -70,7 +71,6 @@ export const useStreamingWebSocket = (
 
                 reconnectAttemptsRef.current = 0;
 
-                // Limpiar timeout de reconexión
                 if (reconnectTimeoutRef.current) {
                     clearTimeout(reconnectTimeoutRef.current);
                     reconnectTimeoutRef.current = null;
@@ -82,7 +82,7 @@ export const useStreamingWebSocket = (
                     const message: WebSocketMessage = JSON.parse(event.data);
                     handleMessage(message);
                 } catch (err) {
-                    console.error('❌ Error parseando mensaje:', err);
+                    console.error('❌ Error parseando mensaje WebSocket:', err);
                 }
             };
 
@@ -94,10 +94,10 @@ export const useStreamingWebSocket = (
                     status: 'disconnected'
                 }));
 
-                // Reconexión automática
+                // Auto-reconexión si no fue cierre manual
                 if (event.code !== 1000 && reconnectAttemptsRef.current < finalConfig.maxReconnectAttempts) {
                     reconnectAttemptsRef.current++;
-                    console.log(`🔄 Reintento de conexión ${reconnectAttemptsRef.current}/${finalConfig.maxReconnectAttempts}`);
+                    console.log(`🔄 Reintentando conexión ${reconnectAttemptsRef.current}/${finalConfig.maxReconnectAttempts}`);
 
                     reconnectTimeoutRef.current = setTimeout(() => {
                         connect();
@@ -122,11 +122,11 @@ export const useStreamingWebSocket = (
                 error: 'No se pudo crear la conexión WebSocket'
             }));
         }
-    }, [finalConfig.wsBaseUrl, finalConfig.reconnectInterval, finalConfig.maxReconnectAttempts]);
+    }, [finalConfig.maxReconnectAttempts, finalConfig.reconnectInterval]);
 
-    // 📨 MANEJAR MENSAJES
+    // 📨 MANEJAR MENSAJES WEBSOCKET
     const handleMessage = useCallback((message: WebSocketMessage) => {
-        console.log('📨 Mensaje recibido:', message.type);
+        console.log('📨 Mensaje WebSocket recibido:', message.type);
 
         // Ejecutar handlers personalizados
         const handler = messageHandlersRef.current.get(message.type);
@@ -134,16 +134,24 @@ export const useStreamingWebSocket = (
             handler(message.data);
         }
 
-        // Manejo por defecto
+        // Manejo de mensajes por defecto
         switch (message.type) {
             case 'connection_established':
-                console.log('✅ Conexión establecida');
+                console.log('✅ Conexión WebSocket establecida');
                 break;
 
             case 'session_accepted':
                 setState(prev => ({ ...prev, status: 'initializing' }));
                 break;
 
+            case 'video_uploaded':
+                console.log('📹 Video subido exitosamente');
+                if (message.data) {
+                    setState(prev => ({ ...prev, status: 'initializing' }));
+                }
+                break;
+
+            case 'processing_started':
             case 'streaming_started':
                 setState(prev => ({
                     ...prev,
@@ -159,6 +167,7 @@ export const useStreamingWebSocket = (
                 break;
 
             case 'streaming_completed':
+            case 'processing_completed':
                 setState(prev => ({
                     ...prev,
                     isStreaming: false,
@@ -167,6 +176,7 @@ export const useStreamingWebSocket = (
                 break;
 
             case 'streaming_error':
+            case 'processing_error':
                 setState(prev => ({
                     ...prev,
                     error: message.error || 'Error de streaming',
@@ -203,12 +213,16 @@ export const useStreamingWebSocket = (
                 sendMessage({ type: 'pong', timestamp: Date.now() });
                 break;
 
+            case 'pong':
+                // Respuesta a nuestro ping
+                break;
+
             default:
                 console.log('📨 Tipo de mensaje no manejado:', message.type);
         }
     }, []);
 
-    // 📊 ACTUALIZAR STREAMING
+    // 📊 ACTUALIZAR DATOS DE STREAMING
     const handleStreamingUpdate = useCallback((data: StreamingUpdateData) => {
         setState(prev => {
             const newState = { ...prev };
@@ -234,7 +248,7 @@ export const useStreamingWebSocket = (
                 newState.currentFrame = newFrame;
             }
 
-            // Actualizar detecciones
+            // Actualizar detecciones actuales
             if (data.current_detections) {
                 newState.detections = data.current_detections;
             }
@@ -248,10 +262,11 @@ export const useStreamingWebSocket = (
         });
     }, []);
 
-    // 📤 ENVIAR MENSAJE
+    // 📤 ENVIAR MENSAJE WEBSOCKET
     const sendMessage = useCallback((message: Record<string, unknown>) => {
         if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
             wsRef.current.send(JSON.stringify(message));
+            console.log('📤 Mensaje enviado:', message.type);
         } else {
             console.warn('⚠️ WebSocket no está conectado');
         }
@@ -266,42 +281,18 @@ export const useStreamingWebSocket = (
         try {
             setState(prev => ({ ...prev, error: null, status: 'uploading' }));
 
-            const formData = new FormData();
-            formData.append('session_id', state.sessionId);
-            formData.append('file', file);
+            console.log('📤 Subiendo video para streaming...');
 
-            // Parámetros por defecto
-            const defaultOptions: Required<StreamingOptions> = {
-                confidence_threshold: 0.3,
-                iou_threshold: 0.4,
-                frame_skip: 2,
-                max_duration: 600,
-                send_all_frames: false,
-                adaptive_quality: true,
-                enable_thumbnails: true
-            };
+            // Usar el servicio API para subir el video
+            const result = await apiServiceRef.current.uploadVideoForStreaming(
+                state.sessionId,
+                file,
+                options
+            );
 
-            // Combinar opciones
-            const finalOptions = { ...defaultOptions, ...options };
+            console.log('✅ Video subido exitosamente:', result);
 
-            // Agregar opciones al FormData
-            Object.entries(finalOptions).forEach(([key, value]) => {
-                formData.append(key, value.toString());
-            });
-
-            const response = await fetch(`${finalConfig.apiBaseUrl}/api/v1/streaming/start-session`, {
-                method: 'POST',
-                body: formData
-            });
-
-            if (!response.ok) {
-                const errorData = await response.json();
-                const errorMessage = errorData.detail?.message || errorData.message || 'Error iniciando streaming';
-                throw new Error(errorMessage);
-            }
-
-            const result: StreamingStartResponse = await response.json();
-            console.log('🎬 Streaming iniciado:', result);
+            // El backend automáticamente iniciará el streaming via WebSocket
 
         } catch (err) {
             console.error('❌ Error iniciando streaming:', err);
@@ -313,22 +304,26 @@ export const useStreamingWebSocket = (
             }));
             throw err;
         }
-    }, [state.isConnected, state.sessionId, finalConfig.apiBaseUrl]);
+    }, [state.isConnected, state.sessionId]);
 
-    // ⏸️ CONTROLES
+    // ⏸️ CONTROLES DE STREAMING
     const pauseStreaming = useCallback(() => {
+        console.log('⏸️ Pausando streaming...');
         sendMessage({ type: 'pause_processing' });
     }, [sendMessage]);
 
     const resumeStreaming = useCallback(() => {
+        console.log('▶️ Reanudando streaming...');
         sendMessage({ type: 'resume_processing' });
     }, [sendMessage]);
 
     const stopStreaming = useCallback(() => {
+        console.log('⏹️ Deteniendo streaming...');
         sendMessage({ type: 'stop_processing' });
     }, [sendMessage]);
 
     const requestStatus = useCallback(() => {
+        console.log('📊 Solicitando estado...');
         sendMessage({ type: 'get_status' });
     }, [sendMessage]);
 
@@ -339,7 +334,6 @@ export const useStreamingWebSocket = (
     ) => {
         messageHandlersRef.current.set(messageType, handler as MessageHandler);
 
-        // Retornar función de limpieza
         return () => {
             messageHandlersRef.current.delete(messageType);
         };
@@ -347,6 +341,8 @@ export const useStreamingWebSocket = (
 
     // 🔌 DESCONECTAR
     const disconnect = useCallback(() => {
+        console.log('🔌 Desconectando WebSocket...');
+
         if (wsRef.current) {
             wsRef.current.close(1000, 'Desconexión manual');
         }
@@ -371,33 +367,27 @@ export const useStreamingWebSocket = (
         }
 
         try {
-            const url = `${finalConfig.apiBaseUrl}/api/v1/streaming/sessions/${state.sessionId}/download?format=${format}&include_timeline=true`;
-            const response = await fetch(url);
-
-            if (!response.ok) {
-                throw new Error('Error descargando resultados');
-            }
-
-            const blob = await response.blob();
-            const downloadUrl = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = downloadUrl;
-            a.download = `streaming_results_${state.sessionId}_${Date.now()}.${format}`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(downloadUrl);
+            console.log(`📥 Descargando resultados en formato ${format}...`);
+            await apiServiceRef.current.downloadResults(state.sessionId, format);
+            console.log('✅ Descarga completada');
         } catch (err) {
             console.error('❌ Error descargando:', err);
             throw err;
         }
-    }, [state.sessionId, finalConfig.apiBaseUrl]);
+    }, [state.sessionId]);
+
+    // 🧹 LIMPIAR ERROR
+    const clearError = useCallback(() => {
+        setState(prev => ({ ...prev, error: null }));
+    }, []);
 
     // 🔄 EFECTO DE INICIALIZACIÓN
     useEffect(() => {
+        console.log('🔄 Inicializando hook de streaming...');
         connect();
 
         return () => {
+            console.log('🧹 Limpiando hook de streaming...');
             disconnect();
         };
     }, [connect, disconnect]);
@@ -411,13 +401,17 @@ export const useStreamingWebSocket = (
         };
     }, []);
 
-    // 🧹 LIMPIAR ERROR
-    const clearError = useCallback(() => {
-        setState(prev => ({ ...prev, error: null }));
-    }, []);
+    // 📊 HELPERS DE ESTADO
+    const canStart = state.isConnected && !state.isStreaming;
+    const canControl = state.isStreaming && state.status === 'processing';
+    const hasResults = state.uniquePlates.length > 0 || state.status === 'completed';
+    const isUploading = state.status === 'uploading';
+    const isInitializing = state.status === 'initializing';
+    const isCompleted = state.status === 'completed';
+    const hasError = state.status === 'error';
 
     return {
-        // Estado
+        // Estado principal
         ...state,
 
         // Acciones
@@ -439,12 +433,12 @@ export const useStreamingWebSocket = (
         connectionStatus: state.isConnected ? 'connected' : 'disconnected',
 
         // Helpers de estado
-        isUploading: state.status === 'uploading',
-        isInitializing: state.status === 'initializing',
-        isCompleted: state.status === 'completed',
-        hasError: state.status === 'error',
-        canStart: state.isConnected && !state.isStreaming,
-        canControl: state.isStreaming && state.status === 'processing',
-        hasResults: state.uniquePlates.length > 0 || state.status === 'completed'
+        canStart,
+        canControl,
+        hasResults,
+        isUploading,
+        isInitializing,
+        isCompleted,
+        hasError
     };
 };
