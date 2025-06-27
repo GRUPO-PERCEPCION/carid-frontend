@@ -1,3 +1,4 @@
+// src/pages/StreamingRecognition.tsx - VERSIÓN CORREGIDA
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,7 +12,7 @@ import { Link } from "react-router-dom";
 import { useStreamingWebSocket } from "../hooks/useStreamingWebSocket";
 import { streamingApi } from "../services/streamingApi";
 import { StreamingDebugConsole } from "../components/StreamingDebugConsole";
-import type {
+import {
   StreamingStatus,
   UploadProgressData,
   SystemMessageData,
@@ -129,7 +130,7 @@ const StreamingRecognition: React.FC = () => {
     if (window.streamingDebug && window.streamingDebug[type as keyof typeof window.streamingDebug]) {
       const debugFunction = window.streamingDebug[type as keyof typeof window.streamingDebug];
       if (typeof debugFunction === 'function') {
-        debugFunction(category, message, data);
+        debugFunction(category, message, JSON.stringify(data));
       }
     }
   }, []);
@@ -334,7 +335,7 @@ const StreamingRecognition: React.FC = () => {
   useEffect(() => {
     // Handler para updates de progreso de subida
     const unsubscribeUpload = onMessage('upload_progress', (data: unknown) => {
-      if (isUploadProgressData(data) && typeof data.progress === 'number') {
+      if (isUploadProgressData(data)) {
         setUploadProgress(data.progress);
         debugLog('info', 'Upload Progress', `Progreso: ${data.progress}%`);
       }
@@ -535,7 +536,7 @@ const StreamingRecognition: React.FC = () => {
             )}
 
             <div className="grid lg:grid-cols-3 gap-8">
-              {/* Panel de Control - Resto del componente igual... */}
+              {/* Panel de Control */}
               <div className="space-y-6">
                 {/* Upload & Control */}
                 <Card className="bg-white/10 border-white/20 backdrop-blur-sm">

@@ -1,3 +1,4 @@
+// src/types/streaming.ts - VERSIÓN CORREGIDA
 export interface StreamingFrame {
     image: string;
     frameNumber: number;
@@ -274,15 +275,15 @@ export interface GenericWebSocketData {
     };
 }
 
-// 🔧 TYPE GUARDS PARA VALIDACIÓN SEGURA
+// 🔧 TYPE GUARDS PARA VALIDACIÓN SEGURA - EXPORTAR COMO FUNCIONES
 export function isStreamingUpdateData(data: unknown): data is StreamingUpdateData {
     return typeof data === 'object' && data !== null;
 }
 
 export function isUploadProgressData(data: unknown): data is UploadProgressData {
-    return typeof data === 'object' && data !== null && 'progress' in data;
+    return typeof data === 'object' && data !== null && 'progress' in data && typeof (data as UploadProgressData).progress === 'number';
 }
 
 export function isSystemMessageData(data: unknown): data is SystemMessageData {
-    return typeof data === 'object' && data !== null && 'message' in data;
+    return typeof data === 'object' && data !== null && 'message' in data && typeof (data as SystemMessageData).message === 'string';
 }
