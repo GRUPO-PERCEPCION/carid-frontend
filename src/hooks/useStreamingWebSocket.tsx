@@ -1,4 +1,5 @@
-// RUTA: src/hooks/useStreamingWebSocket.tsx
+// ARCHIVO: src/hooks/useStreamingWebSocket.tsx
+// ✅ VERSIÓN CON DEBUGGING EXTENSIVO PARA IDENTIFICAR EL PROBLEMA
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { streamingApi } from '../services/streamingApi';
@@ -14,8 +15,8 @@ import {
     UseStreamingWebSocketReturn,
     MessageHandler,
     WebSocketMessage,
-    isStreamingUpdateData, // Importante: Se usa el type guard
-} from '../types/streaming'; // Se usan los tipos desde el archivo de definiciones
+    isStreamingUpdateData,
+} from '../types/streaming';
 
 export function useStreamingWebSocket(config: UseStreamingWebSocketConfig): UseStreamingWebSocketReturn {
     // Estado principal
@@ -39,14 +40,30 @@ export function useStreamingWebSocket(config: UseStreamingWebSocketConfig): UseS
     const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
     const reconnectAttemptsRef = useRef(0);
 
+    // ✅ NUEVO: Referencias para debugging
+    const messageCountRef = useRef(0);
+    const frameUpdateCountRef = useRef(0);
+    const lastFrameNumberRef = useRef(0);
+
     // Configuración
     const wsBaseUrl = config.wsBaseUrl || 'ws://localhost:8000';
     const reconnectInterval = config.reconnectInterval || 3000;
     const maxReconnectAttempts = config.maxReconnectAttempts || 5;
 
-    // Logging helper
+    // ✅ LOGGING MEJORADO con colores y timestamps
     const log = useCallback((level: 'info' | 'warn' | 'error', message: string, data?: unknown) => {
-        console[level](`[WebSocket] ${message}`, data || '');
+        const timestamp = new Date().toISOString().split('T')[1].slice(0, -1);
+        const colors = {
+            info: 'color: #3b82f6',
+            warn: 'color: #f59e0b',
+            error: 'color: #ef4444'
+        };
+
+        console.log(
+            `%c[${timestamp}] [WebSocket] ${message}`,
+            colors[level],
+            data || ''
+        );
     }, []);
 
     // Generar session ID único
@@ -54,116 +71,158 @@ export function useStreamingWebSocket(config: UseStreamingWebSocketConfig): UseS
         return `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     }, []);
 
-    // ✅ FUNCIÓN CORREGIDA: Manejar actualizaciones de streaming
-    const handleStreamingUpdate = useCallback((data: unknown) => {
-        // ✅ Agregar logging detallado para debugging
-        console.log('🔄 Streaming update received:', {
-            hasImage: !!(data as any)?.frame_data?.image_base64,
-            hasFrameInfo: !!(data as any)?.frame_info,
-            hasDetections: !!(data as any)?.current_detections,
-            detectionsCount: Array.isArray((data as any)?.current_detections) ? (data as any).current_detections.length : 0,
-            frameNumber: (data as any)?.frame_info?.frame_number || 'N/A',
-            timestamp: new Date().toISOString()
-        });
+    // ✅ FUNCIÓN DE DEBUG DETALLADO
+    const debugStreamingUpdate = useCallback((data: any, source: string = 'unknown') => {
+        messageCountRef.current += 1;
 
-        // ✅ Aplicar el type guard para validar la estructura
-        if (!isStreamingUpdateData(data)) {
-            log('warn', 'Formato de datos de streaming inesperado', data);
+        const debugInfo = {
+            messageCount: messageCountRef.current,
+            source: source,
+            messageType: typeof data,
+            hasFrameData: !!data?.frame_data,
+            hasImageBase64: !!data?.frame_data?.image_base64,
+            imageLength: data?.frame_data?.image_base64?.length || 0,
+            hasFrameInfo: !!data?.frame_info,
+            frameNumber: data?.frame_info?.frame_number,
+            hasDetections: !!data?.current_detections,
+            detectionsCount: Array.isArray(data?.current_detections) ? data.current_detections.length : 0,
+            hasProgress: !!data?.progress,
+            progressPercent: data?.progress?.progress_percent,
+            allKeys: Object.keys(data || {}),
+            timestamp: new Date().toISOString()
+        };
+
+        console.group(`%c🔍 STREAMING UPDATE #${messageCountRef.current}`, 'color: #8b5cf6; font-weight: bold');
+        console.table(debugInfo);
+        console.log('📦 Raw data:', data);
+        console.groupEnd();
+
+        return debugInfo;
+    }, []);
+
+    // ✅ FUNCIÓN CORREGIDA CON MÚLTIPLES ESTRATEGIAS
+    const handleStreamingUpdate = useCallback((data: unknown) => {
+        // ✅ 1. Debug completo de entrada
+        const debugInfo = debugStreamingUpdate(data, 'handleStreamingUpdate');
+
+        // ✅ 2. Validación de datos básica
+        if (!data || typeof data !== 'object') {
+            console.error('❌ Invalid data received:', data);
             return;
         }
 
-        // A partir de aquí, TypeScript sabe que 'data' tiene el tipo 'StreamingUpdateData'
+        const updateData = data as any;
+
         setState(prev => {
             const newState = { ...prev };
+            let frameUpdated = false;
+            let detectionsUpdated = false;
+            let progressUpdated = false;
 
-            // 1. ✅ SIEMPRE actualizar progreso si está disponible
-            if (data.progress) {
-                newState.progress = {
-                    processed: Number(data.progress.processed_frames || prev.progress.processed),
-                    total: Number(data.progress.total_frames || prev.progress.total),
-                    percent: Number(data.progress.progress_percent || prev.progress.percent)
-                };
-                newState.processingSpeed = Number(data.progress.processing_speed || prev.processingSpeed);
-
-                console.log('📊 Progress updated:', {
-                    processed: newState.progress.processed,
-                    total: newState.progress.total,
-                    percent: newState.progress.percent,
-                    speed: newState.processingSpeed
-                });
-            }
-
-            // 2. ✅ CORRECCIÓN PRINCIPAL: Actualizar frame de forma más flexible
-            if (data.frame_data?.image_base64) {
-                const frameNumber = data.frame_info?.frame_number ||
-                    (prev.currentFrame?.frameNumber || 0) + 1;
+            // ✅ 3. ESTRATEGIA 1: Actualizar frame si hay imagen
+            if (updateData.frame_data?.image_base64) {
+                frameUpdateCountRef.current += 1;
+                const frameNumber = updateData.frame_info?.frame_number || (lastFrameNumberRef.current + 1);
+                lastFrameNumberRef.current = frameNumber;
 
                 newState.currentFrame = {
-                    image: `data:image/jpeg;base64,${data.frame_data.image_base64}`,
+                    image: `data:image/jpeg;base64,${updateData.frame_data.image_base64}`,
                     frameNumber: frameNumber,
-                    timestamp: data.frame_info?.timestamp || Date.now(),
-                    processingTime: data.frame_info?.processing_time || 0
+                    timestamp: updateData.frame_info?.timestamp || Date.now(),
+                    processingTime: updateData.frame_info?.processing_time || 0
                 };
 
-                console.log('🖼️ Frame updated:', {
+                frameUpdated = true;
+                console.log(`%c🖼️ FRAME UPDATED #${frameUpdateCountRef.current}`, 'color: #10b981; font-weight: bold', {
                     frameNumber: frameNumber,
-                    hasImage: true,
+                    imageLength: updateData.frame_data.image_base64.length,
                     processingTime: newState.currentFrame.processingTime
                 });
             }
-            // ✅ NUEVA LÓGICA: Si solo hay frame_info sin image_base64, mantener imagen anterior pero actualizar metadatos
-            else if (data.frame_info && prev.currentFrame) {
+
+            // ✅ 4. ESTRATEGIA 2: Si no hay imagen pero hay frame_info, mantener imagen anterior
+            else if (updateData.frame_info && prev.currentFrame) {
+                const frameNumber = updateData.frame_info.frame_number || prev.currentFrame.frameNumber;
+                lastFrameNumberRef.current = frameNumber;
+
                 newState.currentFrame = {
-                    ...prev.currentFrame, // Mantener la imagen anterior
-                    frameNumber: Number(data.frame_info.frame_number || prev.currentFrame.frameNumber),
-                    timestamp: Number(data.frame_info.timestamp || prev.currentFrame.timestamp),
-                    processingTime: Number(data.frame_info.processing_time || prev.currentFrame.processingTime)
+                    ...prev.currentFrame,
+                    frameNumber: frameNumber,
+                    timestamp: updateData.frame_info.timestamp || prev.currentFrame.timestamp,
+                    processingTime: updateData.frame_info.processing_time || prev.currentFrame.processingTime
                 };
 
-                console.log('📋 Frame metadata updated:', {
-                    frameNumber: newState.currentFrame.frameNumber,
-                    hasImage: false,
+                console.log(`%c📋 FRAME METADATA UPDATED`, 'color: #f59e0b', {
+                    frameNumber: frameNumber,
                     keptPreviousImage: true
                 });
             }
 
-            // 3. ✅ Actualizar detecciones (pueden estar vacías)
-            if (data.hasOwnProperty('current_detections')) {
-                newState.detections = Array.isArray(data.current_detections)
-                    ? data.current_detections
-                    : [];
+            // ✅ 5. Actualizar progreso
+            if (updateData.progress) {
+                newState.progress = {
+                    processed: Number(updateData.progress.processed_frames || prev.progress.processed),
+                    total: Number(updateData.progress.total_frames || prev.progress.total),
+                    percent: Number(updateData.progress.progress_percent || prev.progress.percent)
+                };
+                newState.processingSpeed = Number(updateData.progress.processing_speed || prev.processingSpeed);
+                progressUpdated = true;
 
-                console.log('🎯 Detections updated:', {
-                    count: newState.detections.length,
-                    frameNumber: data.frame_info?.frame_number || 'N/A'
+                console.log(`%c📊 PROGRESS UPDATED`, 'color: #3b82f6', {
+                    processed: newState.progress.processed,
+                    total: newState.progress.total,
+                    percent: newState.progress.percent.toFixed(1) + '%'
                 });
             }
-            // ✅ NUEVA LÓGICA: Limpiar detecciones si el frame no tiene detecciones pero hay frame_info
-            else if (data.frame_info && !data.current_detections) {
-                newState.detections = []; // Limpiar detecciones para frames sin placas
-                console.log('🧹 Detections cleared for frame:', data.frame_info.frame_number);
+
+            // ✅ 6. Actualizar detecciones
+            if (updateData.hasOwnProperty('current_detections')) {
+                newState.detections = Array.isArray(updateData.current_detections)
+                    ? updateData.current_detections
+                    : [];
+                detectionsUpdated = true;
+
+                console.log(`%c🎯 DETECTIONS UPDATED`, 'color: #ef4444', {
+                    count: newState.detections.length,
+                    frameNumber: updateData.frame_info?.frame_number || 'unknown'
+                });
             }
 
-            // 4. ✅ Actualizar placas únicas solo cuando hay datos
-            if (data.detection_summary?.best_plates) {
-                newState.uniquePlates = data.detection_summary.best_plates;
-                console.log('🏆 Unique plates updated:', {
+            // ✅ 7. Actualizar placas únicas
+            if (updateData.detection_summary?.best_plates) {
+                newState.uniquePlates = updateData.detection_summary.best_plates;
+                console.log(`%c🏆 UNIQUE PLATES UPDATED`, 'color: #8b5cf6', {
                     count: newState.uniquePlates.length
                 });
             }
 
+            // ✅ 8. Log del resultado final
+            console.log(`%c📈 STATE UPDATE SUMMARY`, 'color: #059669; font-weight: bold', {
+                frameUpdated,
+                detectionsUpdated,
+                progressUpdated,
+                currentFrameNumber: newState.currentFrame?.frameNumber || 'none',
+                detectionsCount: newState.detections.length,
+                uniquePlatesCount: newState.uniquePlates.length
+            });
+
             return newState;
         });
-    }, [log]);
+    }, [debugStreamingUpdate]);
 
-    // Manejar mensajes WebSocket
+    // ✅ MANEJAR MENSAJES WEBSOCKET CON DEBUG
     const handleWebSocketMessage = useCallback((message: WebSocketMessage) => {
         const messageType = message.type || 'unknown';
         const data = message.data || {};
 
-        log('info', `Mensaje recibido: ${messageType}`, data);
+        console.log(`%c📨 WebSocket Message Received`, 'color: #6366f1; font-weight: bold', {
+            type: messageType,
+            hasData: !!data,
+            dataKeys: Object.keys(data),
+            timestamp: new Date().toISOString()
+        });
 
-        // ✅ Manejar handlers personalizados primero
+        // Manejar handlers personalizados primero
         if (typeof data === 'object' && data !== null) {
             const handlers = messageHandlersRef.current.get(messageType) || [];
             handlers.forEach(handler => {
@@ -180,43 +239,47 @@ export function useStreamingWebSocket(config: UseStreamingWebSocketConfig): UseS
             case 'connection_established':
                 log('info', 'Conexión establecida confirmada');
                 break;
+
             case 'streaming_started':
                 setState(prev => ({ ...prev, isStreaming: true, status: 'processing', error: null }));
+                console.log(`%c🚀 STREAMING STARTED`, 'color: #10b981; font-weight: bold');
                 break;
+
             case 'streaming_update':
-                handleStreamingUpdate(data);
-                break;
             case 'frame_update':
-                // ✅ NUEVO: Manejar updates solo de frame
-                handleStreamingUpdate(data);
-                break;
             case 'detection_update':
-                // ✅ NUEVO: Manejar updates solo de detecciones
-                handleStreamingUpdate(data);
-                break;
             case 'progress_update':
-                // ✅ NUEVO: Manejar updates solo de progreso
                 handleStreamingUpdate(data);
                 break;
+
             case 'streaming_completed':
                 setState(prev => ({ ...prev, isStreaming: false, status: 'completed' }));
+                console.log(`%c✅ STREAMING COMPLETED`, 'color: #10b981; font-weight: bold');
                 break;
+
             case 'streaming_error':
                 setState(prev => ({ ...prev, isStreaming: false, status: 'error', error: message.error || 'Error de streaming' }));
+                console.log(`%c❌ STREAMING ERROR`, 'color: #ef4444; font-weight: bold', message.error);
                 break;
+
             case 'processing_paused':
                 setState(prev => ({ ...prev, isPaused: true, status: 'paused' }));
                 break;
+
             case 'processing_resumed':
                 setState(prev => ({ ...prev, isPaused: false, status: 'processing' }));
                 break;
+
             case 'processing_stopped':
                 setState(prev => ({ ...prev, isStreaming: false, isPaused: false, status: 'stopped' }));
                 break;
+
+            default:
+                console.log(`%c⚠️ UNHANDLED MESSAGE TYPE: ${messageType}`, 'color: #f59e0b');
         }
     }, [log, handleStreamingUpdate]);
 
-    // Conectar WebSocket
+    // ✅ RESTO DE FUNCIONES SIN CAMBIOS (conectar, desconectar, etc.)
     const connect = useCallback(() => {
         if (wsRef.current?.readyState === WebSocket.OPEN) {
             log('info', 'Ya conectado');
@@ -236,6 +299,11 @@ export function useStreamingWebSocket(config: UseStreamingWebSocketConfig): UseS
                 log('info', 'WebSocket conectado exitosamente');
                 setState(prev => ({ ...prev, isConnected: true, sessionId, status: 'connected', error: null }));
                 reconnectAttemptsRef.current = 0;
+
+                // Reset debugging counters
+                messageCountRef.current = 0;
+                frameUpdateCountRef.current = 0;
+                lastFrameNumberRef.current = 0;
             };
 
             ws.onmessage = (event) => {
@@ -266,7 +334,6 @@ export function useStreamingWebSocket(config: UseStreamingWebSocketConfig): UseS
         }
     }, [wsBaseUrl, generateSessionId, maxReconnectAttempts, log, handleWebSocketMessage]);
 
-    // Programar reconexión
     const scheduleReconnect = useCallback(() => {
         if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
         reconnectAttemptsRef.current += 1;
@@ -282,7 +349,6 @@ export function useStreamingWebSocket(config: UseStreamingWebSocketConfig): UseS
         }, reconnectInterval);
     }, [connect, reconnectInterval, maxReconnectAttempts, log]);
 
-    // Desconectar
     const disconnect = useCallback(() => {
         if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
         wsRef.current?.close(1000, 'Desconexión manual');
@@ -291,7 +357,6 @@ export function useStreamingWebSocket(config: UseStreamingWebSocketConfig): UseS
         log('info', 'Desconectado');
     }, [log]);
 
-    // Enviar mensaje
     const sendMessage = useCallback((message: Record<string, unknown>): boolean => {
         if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
             log('warn', 'WebSocket no conectado, no se pudo enviar mensaje.');
@@ -301,7 +366,6 @@ export function useStreamingWebSocket(config: UseStreamingWebSocketConfig): UseS
         return true;
     }, [log]);
 
-    // Registrar handler de mensaje
     const onMessage = useCallback(<T = Record<string, unknown>>(messageType: string, handler: MessageHandler<T>) => {
         const handlers = messageHandlersRef.current.get(messageType) || [];
         handlers.push(handler as MessageHandler);
@@ -316,7 +380,6 @@ export function useStreamingWebSocket(config: UseStreamingWebSocketConfig): UseS
         };
     }, []);
 
-    // Iniciar streaming
     const startStreaming = useCallback(async (file: File, options?: StreamingOptions) => {
         if (!state.isConnected || !state.sessionId) {
             throw new Error('No hay conexión WebSocket activa para iniciar streaming');
@@ -354,20 +417,6 @@ export function useStreamingWebSocket(config: UseStreamingWebSocketConfig): UseS
             if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
         };
     }, []);
-
-    // ✅ LOGGING de estado para debugging
-    useEffect(() => {
-        console.log('🔄 WebSocket State Changed:', {
-            isConnected: state.isConnected,
-            isStreaming: state.isStreaming,
-            status: state.status,
-            sessionId: state.sessionId,
-            frameNumber: state.currentFrame?.frameNumber || 'N/A',
-            detectionsCount: state.detections.length,
-            uniquePlatesCount: state.uniquePlates.length,
-            progressPercent: state.progress.percent
-        });
-    }, [state.isConnected, state.isStreaming, state.status, state.currentFrame?.frameNumber, state.detections.length, state.uniquePlates.length, state.progress.percent]);
 
     return {
         ...state,
