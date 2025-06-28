@@ -1,3 +1,6 @@
+// ARCHIVO: src/types/streaming.ts
+// ✅ INTERFACES ACTUALIZADAS CON PROPIEDADES DE 6 CARACTERES
+
 export interface StreamingFrame {
     image: string;
     frameNumber: number;
@@ -5,6 +8,7 @@ export interface StreamingFrame {
     processingTime: number;
 }
 
+// ✅ INTERFACE ACTUALIZADA: PlateDetection con propiedades de 6 chars
 export interface PlateDetection {
     detection_id: string;
     frame_num: number;
@@ -17,8 +21,13 @@ export interface PlateDetection {
     is_valid_plate: boolean;
     char_count: number;
     bbox_area: number;
+    // ✅ NUEVAS PROPIEDADES PARA 6 CARACTERES
+    six_char_validated?: boolean;        // Agregada
+    is_six_char_format?: boolean;        // Agregada
+    six_char_confidence?: number;        // Agregada
 }
 
+// ✅ INTERFACE ACTUALIZADA: UniquePlate con propiedades de 6 chars
 export interface UniquePlate {
     plate_text: string;
     first_seen_frame: number;
@@ -35,6 +44,11 @@ export interface UniquePlate {
     frame_history: number[];
     confidence_trend: number[];
     status: string;
+    // ✅ NUEVAS PROPIEDADES PARA 6 CARACTERES
+    is_six_char_valid?: boolean;         // Agregada
+    six_char_detection_count?: number;   // Agregada
+    best_six_char_confidence?: number;   // Agregada
+    six_char_validation_score?: number;  // Agregada
 }
 
 export interface StreamingProgress {
@@ -76,12 +90,17 @@ export interface WebSocketMessage {
     timestamp?: number;
 }
 
+// ✅ INTERFACE ACTUALIZADA: StreamingUpdateData con propiedades de 6 chars
 export interface StreamingUpdateData {
     frame_info?: {
         frame_number: number;
         timestamp: number;
         processing_time: number;
         success: boolean;
+        // ✅ NUEVAS PROPIEDADES DE 6 CHARS EN FRAME INFO
+        roi_used?: boolean;
+        six_char_filter_applied?: boolean;
+        six_char_detections_in_frame?: number;
     };
     progress?: {
         processed_frames: number;
@@ -97,6 +116,12 @@ export interface StreamingUpdateData {
         frames_with_detections: number;
         best_plates: UniquePlate[];
         latest_detections: PlateDetection[];
+        // ✅ NUEVAS PROPIEDADES DE 6 CHARS EN DETECTION SUMMARY
+        six_char_plates_count?: number;
+        best_six_char_plates?: UniquePlate[];
+        detection_density?: number;
+        six_char_detection_rate?: number;
+        session_id?: string;
     };
     frame_data?: {
         image_base64: string;
@@ -113,6 +138,14 @@ export interface StreamingUpdateData {
         current_quality: number;
         recommended_frame_skip: number;
         adaptive_enabled: boolean;
+    };
+    // ✅ NUEVA SECCIÓN: Enhancement stats para ROI y 6 chars
+    enhancement_stats?: {
+        roi_processing?: boolean;
+        six_char_filter_active?: boolean;
+        total_six_char_detections?: number;
+        six_char_plates_found?: number;
+        six_char_detection_rate?: number;
     };
 }
 

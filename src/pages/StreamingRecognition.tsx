@@ -8,14 +8,14 @@ import {
   Activity, Target, Zap, RefreshCw, Monitor, Clock, Terminal, Shield
 } from "lucide-react";
 import { Link } from "react-router-dom";
+import { useStreamingWebSocket } from "../hooks/useStreamingWebSocket";
 import {
-  useStreamingWebSocket,
   isUploadProgressData,
   isSystemMessageData,
   type PlateDetection,
   type UniquePlate,
   type StreamingStatus
-} from "../hooks/useStreamingWebSocket";
+} from "../types/streaming";
 import { streamingApi } from "../services/streamingApi";
 import { StreamingDebugConsole } from "../components/StreamingDebugConsole";
 
