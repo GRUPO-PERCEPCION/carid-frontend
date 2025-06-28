@@ -1,18 +1,56 @@
-import { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Video, Upload, Play, Pause, Target, Download, AlertCircle, CheckCircle, Zap, Eye, Clock, Film } from "lucide-react";
+import { toast } from "sonner";
+import {
+  ArrowLeft, Video, Upload, Play, Pause, Target, Download,
+  AlertCircle, CheckCircle, Zap, Eye, Clock, Film, Shield
+} from "lucide-react";
 import { Link } from "react-router-dom";
 
-// Interfaces para tipado
 interface UniquePlate {
   plate_text: string;
   detection_count: number;
   best_confidence: number;
   is_valid_format: boolean;
-  frame_numbers: number[];
-  first_detection_time: number;
-  last_detection_time: number;
+  is_six_char_valid?: boolean; // ✅ NUEVO CAMPO OPCIONAL
+  frame_numbers?: number[];
+  first_detection_time?: number;
+  last_detection_time?: number;
+  first_seen_frame?: number;
+  last_seen_frame?: number;
+  best_frame?: number;
+  avg_confidence?: number;
+  stability_score?: number;
+  duration_frames?: number;
+  char_count?: number; // ✅ NUEVO CAMPO
+  processing_method?: string;
+}
+
+interface ProcessingSummary {
+  frames_processed: number;
+  frames_with_detections: number;
+  total_detections: number;
+  unique_plates_found: number;
+  valid_plates?: number;
+  six_char_plates?: number; // ✅ NUEVO CAMPO
+}
+
+interface VideoInfo {
+  duration_seconds: number;
+  frame_count: number;
+  fps: number;
+  resolution?: string;
+  width?: number;
+  height?: number;
+  frames_to_process?: number;
+  file_size_mb?: number;
+}
+
+interface EnhancementInfo {
+  roi_enabled: boolean;
+  six_char_filter: boolean;
+  roi_percentage: number;
 }
 
 interface VideoDetectionResponse {
@@ -23,23 +61,24 @@ interface VideoDetectionResponse {
     unique_plates: UniquePlate[];
     best_plate?: UniquePlate;
     processing_time: number;
-    processing_summary: {
-      frames_processed: number;
-      frames_with_detections: number;
-      total_detections: number;
-      unique_plates_found: number;
-    };
-    video_info: {
-      duration_seconds: number;
-      frame_count: number;
-      fps: number;
-      resolution: string;
-    };
+    processing_summary: ProcessingSummary;
+    video_info: VideoInfo;
     result_urls?: {
       annotated_video_url?: string;
       best_frames_urls?: string[];
+      original?: string;
     };
+    enhancement_info?: EnhancementInfo; // ✅ NUEVO
   };
+  // Campos directos para compatibilidad
+  unique_plates?: UniquePlate[];
+  processing_summary?: ProcessingSummary;
+  video_info?: VideoInfo;
+  result_urls?: {
+    annotated_video_url?: string;
+    best_frames_urls?: string[];
+  };
+  enhancement_info?: EnhancementInfo; // ✅ NUEVO
   timestamp?: number;
 }
 
@@ -61,18 +100,20 @@ const VideoRecognition = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [results, setResults] = useState<UniquePlate[]>([]);
-  const [processingStats, setProcessingStats] = useState<any>(null);
-  const [videoInfo, setVideoInfo] = useState<any>(null);
+  const [processingStats, setProcessingStats] = useState<ProcessingSummary | null>(null);
+  const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [annotatedVideoUrl, setAnnotatedVideoUrl] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
+  // ✅ NUEVO ESTADO PARA MEJORAS
+  const [enhancementInfo, setEnhancementInfo] = useState<EnhancementInfo | null>(null);
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const progressIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Configuración de la API
-  const API_BASE_URL = "http://localhost:8000"; // Ajusta según tu configuración
+  const API_BASE_URL = "http://localhost:8000";
 
   useEffect(() => {
     return () => {
@@ -85,14 +126,12 @@ const VideoRecognition = () => {
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
-      // Validar que sea un archivo de video
       const validTypes = ['video/mp4', 'video/avi', 'video/mov', 'video/mkv', 'video/webm'];
       if (!validTypes.includes(file.type)) {
         setError('Formato de video no soportado. Use MP4, AVI, MOV, MKV o WebM');
         return;
       }
 
-      // Validar tamaño (máximo 500MB)
       const maxSize = 500 * 1024 * 1024; // 500MB
       if (file.size > maxSize) {
         setError('El archivo es muy grande. Máximo 500MB permitido');
@@ -107,8 +146,8 @@ const VideoRecognition = () => {
       setProcessingStats(null);
       setVideoInfo(null);
       setAnnotatedVideoUrl(null);
+      setEnhancementInfo(null);
     }
-    // Limpiar el input para permitir seleccionar el mismo archivo de nuevo
     event.target.value = '';
   };
 
@@ -116,7 +155,6 @@ const VideoRecognition = () => {
     const steps = 50;
     const increment = targetProgress / steps;
     const interval = duration / steps;
-
     let currentStep = 0;
 
     if (progressIntervalRef.current) {
@@ -144,7 +182,6 @@ const VideoRecognition = () => {
     setProgress(0);
 
     try {
-      // Simular progreso inicial
       simulateProgress(20, 1000);
 
       const formData = new FormData();
@@ -158,7 +195,6 @@ const VideoRecognition = () => {
       formData.append('create_annotated_video', 'true');
       formData.append('min_detection_frames', '2');
 
-      // Simular progreso de procesamiento
       simulateProgress(80, 2000);
 
       const response = await fetch(`${API_BASE_URL}/api/v1/video/detect`, {
@@ -171,19 +207,30 @@ const VideoRecognition = () => {
       }
 
       const data: VideoDetectionResponse = await response.json();
-
-      // Completar progreso
       setProgress(100);
 
-      if (data.success && data.data) {
-        setResults(data.data.unique_plates || []);
-        setProcessingStats(data.data.processing_summary);
-        setVideoInfo(data.data.video_info);
+      if (data.success) {
+        // ✅ MANEJO CORRECTO DE RESPUESTA ANIDADA O DIRECTA
+        const uniquePlates = data.data?.unique_plates || data.unique_plates || [];
+        const processingSummary = data.data?.processing_summary || data.processing_summary;
+        const videoInfoData = data.data?.video_info || data.video_info;
+        const resultUrls = data.data?.result_urls || data.result_urls;
+        const enhancementData = data.data?.enhancement_info || data.enhancement_info;
 
-        // Si hay video anotado, mostrarlo
-        if (data.data.result_urls?.annotated_video_url) {
-          setAnnotatedVideoUrl(`${API_BASE_URL}${data.data.result_urls.annotated_video_url}`);
+        setResults(uniquePlates);
+        setProcessingStats(processingSummary || null);
+        setVideoInfo(videoInfoData || null);
+        setEnhancementInfo(enhancementData || null);
+
+        if (resultUrls?.annotated_video_url) {
+          setAnnotatedVideoUrl(`${API_BASE_URL}${resultUrls.annotated_video_url}`);
         }
+
+        // ✅ TOAST CON INFO DE MEJORAS
+        const sixCharCount = uniquePlates.filter(p => p.is_six_char_valid).length;
+        toast.success('Análisis completado', {
+          description: `${uniquePlates.length} placas detectadas${sixCharCount > 0 ? ` (${sixCharCount} con 6 caracteres válidos)` : ''}`
+        });
       } else {
         setError(data.message || 'Error desconocido en el procesamiento');
       }
@@ -208,7 +255,6 @@ const VideoRecognition = () => {
     setProgress(0);
 
     try {
-      // Progreso más rápido para detección rápida
       simulateProgress(100, 3000);
 
       const formData = new FormData();
@@ -229,25 +275,34 @@ const VideoRecognition = () => {
       const data: QuickVideoResponse = await response.json();
 
       if (data.success && data.best_plate_text) {
-        // Convertir respuesta rápida a formato estándar
         const quickResult: UniquePlate = {
           plate_text: data.best_plate_text,
           detection_count: data.detection_count,
           best_confidence: data.best_confidence,
           is_valid_format: data.is_valid_format,
-          frame_numbers: [],
-          first_detection_time: 0,
-          last_detection_time: 0
+          is_six_char_valid: false, // Quick no aplica filtro de 6 chars
+          char_count: data.best_plate_text.replace(/[-\s]/g, '').length,
+          processing_method: "quick"
         };
+
         setResults([quickResult]);
         setProcessingStats({
           frames_processed: data.frames_processed,
           unique_plates_found: data.unique_plates_count,
           total_detections: data.detection_count,
-          frames_with_detections: data.detection_count > 0 ? 1 : 0
+          frames_with_detections: data.detection_count > 0 ? 1 : 0,
+          valid_plates: data.is_valid_format ? 1 : 0,
+          six_char_plates: 0
+        });
+
+        toast.success('Detección rápida completada', {
+          description: data.best_plate_text ? `Placa encontrada: ${data.best_plate_text}` : 'No se detectaron placas'
         });
       } else {
         setError(data.message || 'No se detectaron placas en el video');
+        toast.warning('Sin resultados', {
+          description: 'No se detectaron placas válidas en el video'
+        });
       }
 
     } catch (err) {
@@ -261,7 +316,7 @@ const VideoRecognition = () => {
   const handleVideoTimeUpdate = () => {
     if (videoRef.current) {
       setCurrentTime(videoRef.current.currentTime);
-      setDuration(videoRef.current.duration);
+      setDuration(videoRef.current.duration || 0);
     }
   };
 
@@ -277,6 +332,7 @@ const VideoRecognition = () => {
   };
 
   const formatTime = (seconds: number) => {
+    if (!isFinite(seconds)) return '0:00';
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
     return `${mins}:${secs.toString().padStart(2, '0')}`;
@@ -287,8 +343,10 @@ const VideoRecognition = () => {
       timestamp: new Date().toISOString(),
       video_info: videoInfo,
       processing_stats: processingStats,
+      enhancement_info: enhancementInfo,
       unique_plates: results,
-      total_unique_plates: results.length
+      total_unique_plates: results.length,
+      six_char_plates: results.filter(p => p.is_six_char_valid).length
     };
 
     const blob = new Blob([JSON.stringify(exportData, null, 2)], {
@@ -304,17 +362,34 @@ const VideoRecognition = () => {
     URL.revokeObjectURL(url);
   };
 
-  const getConfidenceColor = (confidence: number) => {
+  // ✅ HELPERS TIPADOS
+  const getConfidenceColor = (confidence: number): string => {
     if (confidence >= 0.8) return "text-green-400";
     if (confidence >= 0.6) return "text-yellow-400";
     return "text-red-400";
   };
 
-  const getDetectionCountColor = (count: number) => {
+  const getDetectionCountColor = (count: number): string => {
     if (count >= 10) return "bg-green-500/20 border-green-500/30 text-green-400";
     if (count >= 5) return "bg-yellow-500/20 border-yellow-500/30 text-yellow-400";
     return "bg-blue-500/20 border-blue-500/30 text-blue-400";
   };
+
+  const getSixCharIndicator = (plate: UniquePlate): JSX.Element | null => {
+    if (plate.is_six_char_valid) {
+      return (
+          <div className="flex items-center space-x-1 text-green-400">
+            <Shield className="w-4 h-4" />
+            <span className="text-xs font-semibold">6 CHARS</span>
+          </div>
+      );
+    }
+    return null;
+  };
+
+  // ✅ FILTROS TIPADOS
+  const validPlates = results.filter(p => p.is_valid_format);
+  const sixCharPlates = results.filter(p => p.is_six_char_valid);
 
   return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-800">
@@ -331,6 +406,13 @@ const VideoRecognition = () => {
                   <Video className="w-5 h-5 text-white" />
                 </div>
                 <span className="text-lg font-bold text-white">Reconocimiento por Video</span>
+                {/* ✅ INDICADOR DE MEJORAS */}
+                {enhancementInfo && (
+                    <div className="flex items-center space-x-2 bg-purple-500/20 border border-purple-500/30 rounded-lg px-3 py-1">
+                      <Shield className="w-4 h-4 text-purple-400" />
+                      <span className="text-xs text-purple-400">ROI + 6 CHARS</span>
+                    </div>
+                )}
               </div>
             </div>
           </div>
@@ -341,7 +423,9 @@ const VideoRecognition = () => {
             {/* Title */}
             <div className="text-center mb-8">
               <h1 className="text-3xl font-bold text-white mb-2">Reconocimiento por Video</h1>
-              <p className="text-gray-300">Carga un archivo de video para análisis frame por frame con tracking inteligente</p>
+              <p className="text-gray-300">
+                Análisis con ROI central (10%) y filtro de 6 caracteres para placas peruanas
+              </p>
             </div>
 
             {/* Error Message */}
@@ -387,13 +471,16 @@ const VideoRecognition = () => {
                           <div className="flex items-center space-x-3">
                             <Video className="w-8 h-8 text-green-400" />
                             <div className="flex-1 min-w-0">
-                              <p className="text-white font-medium text-sm truncate"
-                              title={selectedFile.name}
-                              style={{ maxWidth: "180px" }}
+                              <p
+                                  className="text-white font-medium text-sm truncate"
+                                  title={selectedFile.name}
+                                  style={{ maxWidth: "180px" }}
                               >
                                 {selectedFile.name}
                               </p>
-                              <p className="text-gray-400 text-xs">{(selectedFile.size / 1024 / 1024).toFixed(2)} MB</p>
+                              <p className="text-gray-400 text-xs">
+                                {(selectedFile.size / 1024 / 1024).toFixed(2)} MB
+                              </p>
                             </div>
                           </div>
                         </div>
@@ -412,7 +499,7 @@ const VideoRecognition = () => {
                             ) : (
                                 <>
                                   <Eye className="w-4 h-4 mr-2" />
-                                  Análisis Completo
+                                  Análisis ROI
                                 </>
                             )}
                           </Button>
@@ -442,25 +529,17 @@ const VideoRecognition = () => {
                               setSelectedVideo(null);
                               setResults([]);
                               setProgress(0);
+                              setEnhancementInfo(null);
                             }}
                             size="sm"
-                            className={`
-                              w-full flex items-center justify-center
-                              bg-white/10 text-white border border-white/30
-                              transition
-                              hover:bg-blue-600/70 hover:text-white hover:border-blue-400
-                              active:scale-95
-                              font-semibold
-                              shadow-md
-                              duration-200
-                            `}
-                            style={{ minHeight: "38px" }}
+                            className="w-full bg-white/10 text-white border border-white/30 hover:bg-blue-600/70 hover:text-white hover:border-blue-400"
                         >
                           Cambiar Video
                         </Button>
                       </div>
                   )}
 
+                  {/* Progreso */}
                   {isProcessing && (
                       <div className="mt-4">
                         <div className="flex justify-between text-sm mb-2">
@@ -471,23 +550,30 @@ const VideoRecognition = () => {
                           <div
                               className="bg-gradient-to-r from-green-500 to-blue-500 h-2 rounded-full transition-all duration-300"
                               style={{ width: `${progress}%` }}
-                          ></div>
+                          />
                         </div>
                         <p className="text-gray-400 text-xs mt-2">
-                          {progress < 30 ? "Preparando video..." :
-                              progress < 80 ? "Analizando frames..." :
+                          {progress < 30 ? "Preparando video con ROI..." :
+                              progress < 80 ? "Analizando frames (ROI + 6 chars)..." :
                                   "Finalizando procesamiento..."}
                         </p>
                       </div>
                   )}
 
+                  {/* Características */}
                   <div className="mt-6 bg-white/5 rounded-lg p-4">
-                    <h4 className="text-white font-semibold mb-2 text-sm">Características</h4>
+                    <h4 className="text-white font-semibold mb-2 text-sm">Características Mejoradas</h4>
                     <div className="space-y-1 text-xs text-gray-400">
+                      <div className="flex items-center space-x-2">
+                        <Shield className="w-3 h-3 text-purple-400" />
+                        <span>ROI central (10% de la imagen)</span>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Target className="w-3 h-3 text-green-400" />
+                        <span>Filtro de 6 caracteres exactos</span>
+                      </div>
                       <div>• Tracking inteligente de placas</div>
-                      <div>• Detección frame por frame</div>
                       <div>• Eliminación de duplicados</div>
-                      <div>• Máximo 5 minutos (configurable)</div>
                     </div>
                   </div>
                 </CardContent>
@@ -522,6 +608,13 @@ const VideoRecognition = () => {
                                 Video Anotado
                               </div>
                           )}
+                          {/* Indicador de ROI */}
+                          {enhancementInfo?.roi_enabled && (
+                              <div className="absolute top-2 left-2 bg-purple-600/80 text-white px-2 py-1 rounded text-xs flex items-center space-x-1">
+                                <Shield className="w-3 h-3" />
+                                <span>ROI {enhancementInfo.roi_percentage}%</span>
+                              </div>
+                          )}
                         </div>
 
                         <div className="flex items-center space-x-4">
@@ -536,7 +629,7 @@ const VideoRecognition = () => {
                             <div
                                 className="bg-green-500 h-2 rounded-full transition-all"
                                 style={{ width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
-                            ></div>
+                            />
                           </div>
                           <span className="text-gray-400 text-sm">
                         {formatTime(currentTime)} / {formatTime(duration)}
@@ -554,11 +647,21 @@ const VideoRecognition = () => {
                   <CardContent className="p-6">
                     <div className="flex items-center justify-between mb-4">
                       <h3 className="text-lg font-bold text-white">Resultados del Análisis</h3>
-                      {processingStats && (
-                          <span className="text-sm text-gray-400">
-                      {processingStats.frames_processed} frames procesados
-                    </span>
-                      )}
+                      <div className="flex items-center space-x-4">
+                        {processingStats && (
+                            <span className="text-sm text-gray-400">
+                        {processingStats.frames_processed} frames procesados
+                      </span>
+                        )}
+                        {enhancementInfo && (
+                            <div className="flex items-center space-x-2 bg-purple-500/20 border border-purple-500/30 rounded px-2 py-1">
+                              <Shield className="w-3 h-3 text-purple-400" />
+                              <span className="text-xs text-purple-400">
+                          ROI {enhancementInfo.roi_percentage}% + 6 chars
+                        </span>
+                            </div>
+                        )}
+                      </div>
                     </div>
 
                     {progress < 100 && isProcessing ? (
@@ -566,33 +669,38 @@ const VideoRecognition = () => {
                           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-400 mx-auto mb-4"></div>
                           <p className="text-white">Analizando frames del video...</p>
                           <p className="text-gray-400 text-sm">
-                            {progress < 30 ? "Inicializando..." :
-                                progress < 80 ? `Procesando frame ${Math.floor(progress * 2)}...` :
-                                    "Generando resultados..."}
+                            {progress < 30 ? "Inicializando ROI..." :
+                                progress < 80 ? `Procesando con filtro 6 chars (frame ${Math.floor(progress * 2)})...` :
+                                    "Generando resultados finales..."}
                           </p>
                         </div>
                     ) : results.length > 0 ? (
                         <div className="space-y-6">
-                          {/* Estadísticas Generales */}
+                          {/* Estadísticas */}
                           {processingStats && (
-                              <div className="grid md:grid-cols-4 gap-4">
+                              <div className="grid md:grid-cols-5 gap-4">
                                 <div className="bg-white/5 rounded-lg p-4 text-center">
                                   <Target className="w-6 h-6 text-blue-400 mx-auto mb-2" />
                                   <p className="text-2xl font-bold text-white">{results.length}</p>
                                   <p className="text-gray-400 text-sm">Placas Únicas</p>
                                 </div>
                                 <div className="bg-white/5 rounded-lg p-4 text-center">
-                                  <Film className="w-6 h-6 text-green-400 mx-auto mb-2" />
+                                  <Shield className="w-6 h-6 text-green-400 mx-auto mb-2" />
+                                  <p className="text-2xl font-bold text-white">{sixCharPlates.length}</p>
+                                  <p className="text-gray-400 text-sm">6 Caracteres</p>
+                                </div>
+                                <div className="bg-white/5 rounded-lg p-4 text-center">
+                                  <CheckCircle className="w-6 h-6 text-yellow-400 mx-auto mb-2" />
+                                  <p className="text-2xl font-bold text-white">{validPlates.length}</p>
+                                  <p className="text-gray-400 text-sm">Válidas</p>
+                                </div>
+                                <div className="bg-white/5 rounded-lg p-4 text-center">
+                                  <Film className="w-6 h-6 text-purple-400 mx-auto mb-2" />
                                   <p className="text-2xl font-bold text-white">{processingStats.frames_processed}</p>
-                                  <p className="text-gray-400 text-sm">Frames Procesados</p>
+                                  <p className="text-gray-400 text-sm">Frames</p>
                                 </div>
                                 <div className="bg-white/5 rounded-lg p-4 text-center">
-                                  <Eye className="w-6 h-6 text-yellow-400 mx-auto mb-2" />
-                                  <p className="text-2xl font-bold text-white">{processingStats.total_detections}</p>
-                                  <p className="text-gray-400 text-sm">Total Detecciones</p>
-                                </div>
-                                <div className="bg-white/5 rounded-lg p-4 text-center">
-                                  <Clock className="w-6 h-6 text-purple-400 mx-auto mb-2" />
+                                  <Clock className="w-6 h-6 text-orange-400 mx-auto mb-2" />
                                   <p className="text-2xl font-bold text-white">
                                     {videoInfo ? `${videoInfo.duration_seconds.toFixed(1)}s` : '-'}
                                   </p>
@@ -601,69 +709,151 @@ const VideoRecognition = () => {
                               </div>
                           )}
 
-                          {/* Lista de Placas Detectadas */}
-                          <div className="space-y-4">
+                          {/* Filtros */}
+                          <div className="flex items-center justify-between">
                             <h4 className="text-white font-semibold">Matrículas Detectadas</h4>
-                            {results.map((result, index) => (
-                                <div key={index} className="bg-white/5 rounded-lg p-4 border border-white/10">
-                                  <div className="flex items-center justify-between mb-3">
-                                    <div className="flex items-center space-x-3">
-                                      <span className="text-white font-mono text-xl">{result.plate_text}</span>
-                                      {result.is_valid_format && (
-                                          <CheckCircle className="w-5 h-5 text-green-400" />
-                                      )}
-                                    </div>
-                                    <span className={`text-sm font-semibold ${getConfidenceColor(result.best_confidence)}`}>
-                              {(result.best_confidence * 100).toFixed(1)}% máx
-                            </span>
-                                  </div>
-
-                                  <div className="grid grid-cols-3 gap-4 text-sm">
-                                    <div className="flex justify-between">
-                                      <span className="text-gray-400">Detecciones:</span>
-                                      <span className={`px-2 py-1 rounded text-xs ${getDetectionCountColor(result.detection_count)}`}>
-                                {result.detection_count} frames
-                              </span>
-                                    </div>
-
-                                    <div className="flex justify-between">
-                                      <span className="text-gray-400">Formato válido:</span>
-                                      <span className={result.is_valid_format ? "text-green-400" : "text-red-400"}>
-                                {result.is_valid_format ? "Sí" : "No"}
-                              </span>
-                                    </div>
-
-                                    <div className="flex justify-between">
-                                      <span className="text-gray-400">Confianza:</span>
-                                      <span className="text-white">
-                                {(result.best_confidence * 100).toFixed(1)}%
-                              </span>
-                                    </div>
-                                  </div>
-
-                                  <div className="mt-3 w-full bg-white/10 rounded-full h-2 overflow-hidden">
-                                    <div
-                                        className="bg-gradient-to-r from-green-500 to-blue-500 h-2 rounded-full transition-all duration-500"
-                                        style={{ width: `${result.best_confidence * 100}%` }}
-                                    ></div>
-                                  </div>
-                                </div>
-                            ))}
+                            <div className="flex items-center space-x-3 text-sm">
+                              <div className="flex items-center space-x-2">
+                                <div className="w-3 h-3 bg-green-400 rounded-full"></div>
+                                <span className="text-gray-400">6 caracteres ({sixCharPlates.length})</span>
+                              </div>
+                              <div className="flex items-center space-x-2">
+                                <div className="w-3 h-3 bg-yellow-400 rounded-full"></div>
+                                <span className="text-gray-400">Válidas ({validPlates.length})</span>
+                              </div>
+                            </div>
                           </div>
 
-                          {/* Botón de Exportar */}
+                          {/* Lista de placas */}
+                          <div className="space-y-4">
+                            {results
+                                .sort((a, b) => {
+                                  // Priorizar placas de 6 caracteres, luego por confianza
+                                  if (a.is_six_char_valid && !b.is_six_char_valid) return -1;
+                                  if (!a.is_six_char_valid && b.is_six_char_valid) return 1;
+                                  return b.best_confidence - a.best_confidence;
+                                })
+                                .map((result, index) => (
+                                    <div
+                                        key={`${result.plate_text}-${index}`}
+                                        className={`
+                            bg-white/5 rounded-lg p-4 border transition-all
+                            ${result.is_six_char_valid
+                                            ? 'border-green-500/30 bg-green-500/5'
+                                            : result.is_valid_format
+                                                ? 'border-yellow-500/20 bg-yellow-500/5'
+                                                : 'border-white/10'
+                                        }
+                          `}
+                                    >
+                                      <div className="flex items-center justify-between mb-3">
+                                        <div className="flex items-center space-x-3">
+                                          <span className="text-white font-mono text-xl">{result.plate_text}</span>
+
+                                          {/* Indicadores */}
+                                          <div className="flex items-center space-x-2">
+                                            {getSixCharIndicator(result)}
+                                            {result.is_valid_format && !result.is_six_char_valid && (
+                                                <CheckCircle className="w-4 h-4 text-yellow-400" />
+                                            )}
+                                          </div>
+
+                                          {/* Info de caracteres */}
+                                          <div className="bg-white/10 rounded px-2 py-1">
+                                <span className="text-xs text-gray-300">
+                                  {result.char_count || result.plate_text.replace(/[-\s]/g, '').length} chars
+                                </span>
+                                          </div>
+                                        </div>
+
+                                        <span className={`text-sm font-semibold ${getConfidenceColor(result.best_confidence)}`}>
+                              {(result.best_confidence * 100).toFixed(1)}% máx
+                            </span>
+                                      </div>
+
+                                      <div className="grid grid-cols-4 gap-4 text-sm mb-3">
+                                        <div className="flex justify-between">
+                                          <span className="text-gray-400">Detecciones:</span>
+                                          <span className={`px-2 py-1 rounded text-xs ${getDetectionCountColor(result.detection_count)}`}>
+                                {result.detection_count} frames
+                              </span>
+                                        </div>
+
+                                        <div className="flex justify-between">
+                                          <span className="text-gray-400">Estabilidad:</span>
+                                          <span className="text-white">
+                                {result.stability_score ? `${(result.stability_score * 100).toFixed(0)}%` : 'N/A'}
+                              </span>
+                                        </div>
+
+                                        <div className="flex justify-between">
+                                          <span className="text-gray-400">Duración:</span>
+                                          <span className="text-white">
+                                {result.duration_frames || 'N/A'} frames
+                              </span>
+                                        </div>
+
+                                        <div className="flex justify-between">
+                                          <span className="text-gray-400">Método:</span>
+                                          <span className="text-purple-400 text-xs">
+                                {result.processing_method === "roi_enhanced" ? "ROI+6C" :
+                                    result.processing_method === "quick" ? "RÁPIDO" : "NORMAL"}
+                              </span>
+                                        </div>
+                                      </div>
+
+                                      {/* Barra de progreso */}
+                                      <div className="mt-3 w-full bg-white/10 rounded-full h-2 overflow-hidden">
+                                        <div
+                                            className={`h-2 rounded-full transition-all duration-500 ${
+                                                result.is_six_char_valid
+                                                    ? 'bg-gradient-to-r from-green-500 to-green-400'
+                                                    : result.is_valid_format
+                                                        ? 'bg-gradient-to-r from-yellow-500 to-yellow-400'
+                                                        : 'bg-gradient-to-r from-blue-500 to-blue-400'
+                                            }`}
+                                            style={{ width: `${result.best_confidence * 100}%` }}
+                                        />
+                                      </div>
+
+                                      {/* Info adicional para placas de 6 caracteres */}
+                                      {result.is_six_char_valid && (
+                                          <div className="mt-2 bg-green-500/10 border border-green-500/20 rounded p-2">
+                                            <div className="flex items-center space-x-2 text-green-400 text-xs">
+                                              <Shield className="w-3 h-3" />
+                                              <span className="font-semibold">Placa validada con 6 caracteres exactos</span>
+                                            </div>
+                                          </div>
+                                      )}
+                                    </div>
+                                ))}
+                          </div>
+
+                          {/* Resumen y exportar */}
                           <div className="mt-6 p-4 bg-gradient-to-r from-blue-600/10 to-green-600/10 rounded-lg border border-white/10">
                             <div className="flex items-center justify-between">
                               <div>
-                                <h4 className="text-white font-semibold">Resumen del Análisis</h4>
-                                <p className="text-gray-400 text-sm">
-                                  {results.length} matrícula{results.length !== 1 ? 's' : ''} única{results.length !== 1 ? 's' : ''} detectada{results.length !== 1 ? 's' : ''}
-                                  {results.filter(r => r.is_valid_format).length > 0 && (
-                                      <span className="text-green-400 ml-2">
-                                ({results.filter(r => r.is_valid_format).length} válida{results.filter(r => r.is_valid_format).length !== 1 ? 's' : ''})
-                              </span>
+                                <h4 className="text-white font-semibold">Resumen del Análisis Mejorado</h4>
+                                <div className="text-gray-400 text-sm space-y-1">
+                                  <p>
+                                    {results.length} matrícula{results.length !== 1 ? 's' : ''} única{results.length !== 1 ? 's' : ''} detectada{results.length !== 1 ? 's' : ''}
+                                  </p>
+                                  {sixCharPlates.length > 0 && (
+                                      <p className="text-green-400">
+                                        ✅ {sixCharPlates.length} con 6 caracteres válidos
+                                      </p>
                                   )}
-                                </p>
+                                  {validPlates.length > 0 && (
+                                      <p className="text-yellow-400">
+                                        ✓ {validPlates.length} con formato válido
+                                      </p>
+                                  )}
+                                  {enhancementInfo && (
+                                      <p className="text-purple-400">
+                                        🎯 Procesado con ROI central ({enhancementInfo.roi_percentage}%) y filtro de 6 caracteres
+                                      </p>
+                                  )}
+                                </div>
                               </div>
                               <Button
                                   onClick={exportResults}
@@ -679,7 +869,21 @@ const VideoRecognition = () => {
                         <div className="text-center py-8">
                           <Target className="w-16 h-16 text-gray-400 mx-auto mb-4" />
                           <p className="text-gray-400 mb-2">No se detectaron placas</p>
-                          <p className="text-gray-500 text-sm">Intenta con un video diferente o ajusta la configuración</p>
+                          <p className="text-gray-500 text-sm">
+                            {enhancementInfo?.six_char_filter
+                                ? "Ninguna placa cumplió con el filtro de 6 caracteres exactos"
+                                : "Intenta con un video diferente o ajusta la configuración"
+                            }
+                          </p>
+                          {enhancementInfo && (
+                              <div className="mt-4 bg-purple-500/10 border border-purple-500/20 rounded-lg p-3">
+                                <div className="text-sm text-purple-400">
+                                  <p>Configuración utilizada:</p>
+                                  <p>• ROI central: {enhancementInfo.roi_percentage}%</p>
+                                  <p>• Filtro de 6 caracteres: {enhancementInfo.six_char_filter ? 'Activo' : 'Inactivo'}</p>
+                                </div>
+                              </div>
+                          )}
                         </div>
                     )}
                   </CardContent>

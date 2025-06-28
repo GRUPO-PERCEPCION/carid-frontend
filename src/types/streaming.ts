@@ -1,4 +1,3 @@
-// src/types/streaming.ts - VERSIÓN CORREGIDA
 export interface StreamingFrame {
     image: string;
     frameNumber: number;

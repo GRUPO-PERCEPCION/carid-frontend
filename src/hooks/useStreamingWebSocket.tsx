@@ -1,18 +1,214 @@
-// src/hooks/useStreamingWebSocket.ts - VERSIÓN CORREGIDA
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { streamingApi } from '../services/streamingApi';
-import type {
-    StreamingState,
-    StreamingFrame,
-    PlateDetection,
-    UniquePlate,
-    StreamingProgress,
-    StreamingStatus,
-    StreamingOptions,
-    UseStreamingWebSocketConfig,
-    UseStreamingWebSocketReturn,
-    MessageHandler
-} from '../types/streaming';
+
+// ✅ INTERFACES ESPECÍFICAS PARA EVITAR 'any'
+interface StreamingFrame {
+    image: string;
+    frameNumber: number;
+    timestamp: number;
+    processingTime: number;
+}
+
+interface PlateDetection {
+    detection_id: string;
+    frame_num: number;
+    timestamp: number;
+    plate_text: string;
+    plate_confidence: number;
+    char_confidence: number;
+    overall_confidence: number;
+    plate_bbox: [number, number, number, number];
+    is_valid_plate: boolean;
+    six_char_validated?: boolean; // ✅ NUEVO
+    validation_info?: Record<string, unknown>; // ✅ NUEVO
+    char_count: number;
+    bbox_area: number;
+    processing_method?: string;
+}
+
+interface UniquePlate {
+    plate_text: string;
+    first_seen_frame: number;
+    first_seen_timestamp: number;
+    last_seen_frame: number;
+    last_seen_timestamp: number;
+    detection_count: number;
+    best_confidence: number;
+    best_frame: number;
+    best_timestamp: number;
+    avg_confidence: number;
+    total_confidence: number;
+    is_valid_format: boolean;
+    is_six_char_valid?: boolean; // ✅ NUEVO
+    six_char_detection_count?: number; // ✅ NUEVO
+    frame_history: number[];
+    confidence_trend: number[];
+    status: string;
+}
+
+interface StreamingProgress {
+    processed: number;
+    total: number;
+    percent: number;
+}
+
+interface StreamingState {
+    isConnected: boolean;
+    isStreaming: boolean;
+    isPaused: boolean;
+    sessionId: string;
+    status: StreamingStatus;
+    error: string | null;
+    currentFrame: StreamingFrame | null;
+    detections: PlateDetection[];
+    uniquePlates: UniquePlate[];
+    progress: StreamingProgress;
+    processingSpeed: number;
+}
+
+type StreamingStatus =
+    | 'disconnected'
+    | 'connected'
+    | 'initializing'
+    | 'uploading'
+    | 'processing'
+    | 'paused'
+    | 'completed'
+    | 'stopped'
+    | 'error';
+
+interface StreamingOptions {
+    confidence_threshold?: number;
+    iou_threshold?: number;
+    frame_skip?: number;
+    max_duration?: number;
+    send_all_frames?: boolean;
+    adaptive_quality?: boolean;
+    enable_thumbnails?: boolean;
+}
+
+interface UseStreamingWebSocketConfig {
+    wsBaseUrl?: string;
+    apiBaseUrl?: string;
+    reconnectInterval?: number;
+    maxReconnectAttempts?: number;
+}
+
+// ✅ TIPOS PARA MENSAJES WEBSOCKET ESPECÍFICOS
+interface WebSocketMessageData {
+    type?: string;
+    data?: Record<string, unknown>;
+    error?: string;
+    timestamp?: number;
+    session_id?: string;
+    message?: string;
+    server_info?: Record<string, unknown>;
+}
+
+interface StreamingUpdateData {
+    frame_info?: {
+        frame_number?: number;
+        timestamp?: number;
+        processing_time?: number;
+        success?: boolean;
+        roi_used?: boolean; // ✅ NUEVO
+        six_char_filter_applied?: boolean; // ✅ NUEVO
+        six_char_detections_in_frame?: number; // ✅ NUEVO
+    };
+    progress?: {
+        processed_frames?: number;
+        total_frames?: number;
+        progress_percent?: number;
+        processing_speed?: number;
+    };
+    current_detections?: PlateDetection[];
+    detection_summary?: {
+        total_detections?: number;
+        unique_plates_count?: number;
+        valid_plates_count?: number;
+        six_char_plates_count?: number; // ✅ NUEVO
+        frames_with_detections?: number;
+        best_plates?: UniquePlate[];
+        best_six_char_plates?: UniquePlate[]; // ✅ NUEVO
+        latest_detections?: PlateDetection[];
+        detection_density?: number;
+        six_char_detection_rate?: number; // ✅ NUEVO
+        session_id?: string;
+    };
+    timing?: {
+        elapsed_time?: number;
+        estimated_remaining?: number;
+    };
+    enhancement_stats?: { // ✅ NUEVO
+        roi_processing?: boolean;
+        six_char_filter_active?: boolean;
+        total_six_char_detections?: number;
+        six_char_plates_found?: number;
+        six_char_detection_rate?: number;
+    };
+    frame_data?: {
+        image_base64?: string;
+        thumbnail_base64?: string;
+        original_size?: [number, number];
+        compressed_size?: number;
+        quality_used?: number;
+    };
+    quality_info?: {
+        current_quality?: number;
+        recommended_frame_skip?: number;
+        adaptive_enabled?: boolean;
+    };
+}
+
+type MessageHandler<T = Record<string, unknown>> = (data: T) => void;
+
+interface UseStreamingWebSocketReturn extends StreamingState {
+    // Helpers de estado
+    canStart: boolean;
+    canControl: boolean;
+    hasResults: boolean;
+    isUploading: boolean;
+    isInitializing: boolean;
+    isCompleted: boolean;
+    hasError: boolean;
+    connectionStatus: 'connected' | 'disconnected';
+
+    // Acciones
+    connect: () => void;
+    disconnect: () => void;
+    startStreaming: (file: File, options?: StreamingOptions) => Promise<void>;
+    pauseStreaming: () => void;
+    resumeStreaming: () => void;
+    stopStreaming: () => void;
+    requestStatus: () => void;
+    downloadResults: (format: 'json' | 'csv') => Promise<void>;
+    sendMessage: (message: Record<string, unknown>) => boolean;
+    onMessage: <T = Record<string, unknown>>(messageType: string, handler: MessageHandler<T>) => () => void;
+    clearError: () => void;
+}
+
+// ✅ TYPE GUARDS PARA VALIDACIÓN SEGURA
+function isWebSocketMessageData(data: unknown): data is WebSocketMessageData {
+    return typeof data === 'object' && data !== null;
+}
+
+function isStreamingUpdateData(data: unknown): data is StreamingUpdateData {
+    return typeof data === 'object' && data !== null;
+}
+
+function isUploadProgressData(data: unknown): data is { progress: number } {
+    return typeof data === 'object' &&
+        data !== null &&
+        'progress' in data &&
+        typeof (data as { progress: number }).progress === 'number';
+}
+
+function isSystemMessageData(data: unknown): data is { type: string; title?: string; message: string } {
+    return typeof data === 'object' &&
+        data !== null &&
+        'message' in data &&
+        typeof (data as { message: string }).message === 'string';
+}
 
 export function useStreamingWebSocket(config: UseStreamingWebSocketConfig): UseStreamingWebSocketReturn {
     // Estado principal
@@ -82,7 +278,7 @@ export function useStreamingWebSocket(config: UseStreamingWebSocketConfig): UseS
 
             ws.onmessage = (event) => {
                 try {
-                    const message = JSON.parse(event.data);
+                    const message = JSON.parse(event.data) as WebSocketMessageData;
                     handleWebSocketMessage(message);
                 } catch (error) {
                     log('error', 'Error parseando mensaje WebSocket', error);
@@ -172,9 +368,9 @@ export function useStreamingWebSocket(config: UseStreamingWebSocketConfig): UseS
     }, [log]);
 
     // Manejar mensajes WebSocket
-    const handleWebSocketMessage = useCallback((message: Record<string, unknown>) => {
-        const messageType = String(message.type || 'unknown');
-        const data = message.data as Record<string, unknown> | undefined;
+    const handleWebSocketMessage = useCallback((message: WebSocketMessageData) => {
+        const messageType = message.type || 'unknown';
+        const data = message.data || {};
 
         log('info', `Mensaje recibido: ${messageType}`, data);
 
@@ -182,7 +378,7 @@ export function useStreamingWebSocket(config: UseStreamingWebSocketConfig): UseS
         const handlers = messageHandlersRef.current.get(messageType) || [];
         handlers.forEach(handler => {
             try {
-                handler(data || {});
+                handler(data);
             } catch (error) {
                 log('error', `Error en handler para ${messageType}`, error);
             }
@@ -204,7 +400,7 @@ export function useStreamingWebSocket(config: UseStreamingWebSocketConfig): UseS
                 break;
 
             case 'streaming_update':
-                handleStreamingUpdate(data || {});
+                handleStreamingUpdate(data);
                 break;
 
             case 'streaming_completed':
@@ -220,7 +416,7 @@ export function useStreamingWebSocket(config: UseStreamingWebSocketConfig): UseS
                     ...prev,
                     isStreaming: false,
                     status: 'error',
-                    error: String(message.error || 'Error de streaming')
+                    error: message.error || 'Error de streaming'
                 }));
                 break;
 
@@ -251,13 +447,15 @@ export function useStreamingWebSocket(config: UseStreamingWebSocketConfig): UseS
         }
     }, [log]);
 
-    // Manejar actualizaciones de streaming
+    // ✅ MANEJAR ACTUALIZACIONES DE STREAMING CON MEJORAS
     const handleStreamingUpdate = useCallback((data: Record<string, unknown>) => {
         try {
+            if (!isStreamingUpdateData(data)) return;
+
             // Actualizar progreso
-            if (data.progress && typeof data.progress === 'object') {
-                const progressData = data.progress as Record<string, unknown>;
-                const progress: StreamingProgress = {
+            if (data.progress) {
+                const progressData = data.progress;
+                const progress = {
                     processed: Number(progressData.processed_frames || 0),
                     total: Number(progressData.total_frames || 0),
                     percent: Number(progressData.progress_percent || 0)
@@ -271,31 +469,31 @@ export function useStreamingWebSocket(config: UseStreamingWebSocketConfig): UseS
             }
 
             // Actualizar frame actual
-            if (data.frame_data && typeof data.frame_data === 'object') {
-                const frameData = data.frame_data as Record<string, unknown>;
-                const frameInfo = data.frame_info as Record<string, unknown> | undefined;
+            if (data.frame_data && data.frame_info) {
+                const frameData = data.frame_data;
+                const frameInfo = data.frame_info;
 
                 if (frameData.image_base64 && typeof frameData.image_base64 === 'string') {
                     const currentFrame: StreamingFrame = {
                         image: `data:image/jpeg;base64,${frameData.image_base64}`,
-                        frameNumber: Number(frameInfo?.frame_number || 0),
-                        timestamp: Number(frameInfo?.timestamp || 0),
-                        processingTime: Number(frameInfo?.processing_time || 0)
+                        frameNumber: Number(frameInfo.frame_number || 0),
+                        timestamp: Number(frameInfo.timestamp || 0),
+                        processingTime: Number(frameInfo.processing_time || 0)
                     };
 
                     setState(prev => ({ ...prev, currentFrame }));
                 }
             }
 
-            // Actualizar detecciones actuales
+            // ✅ ACTUALIZAR DETECCIONES CON CAMPOS DE 6 CARACTERES
             if (Array.isArray(data.current_detections)) {
                 const detections = data.current_detections as PlateDetection[];
                 setState(prev => ({ ...prev, detections }));
             }
 
-            // Actualizar placas únicas
+            // ✅ ACTUALIZAR PLACAS ÚNICAS CON CAMPOS DE 6 CARACTERES
             if (data.detection_summary && typeof data.detection_summary === 'object') {
-                const summary = data.detection_summary as Record<string, unknown>;
+                const summary = data.detection_summary;
                 if (Array.isArray(summary.best_plates)) {
                     const uniquePlates = summary.best_plates as UniquePlate[];
                     setState(prev => ({ ...prev, uniquePlates }));
@@ -308,7 +506,7 @@ export function useStreamingWebSocket(config: UseStreamingWebSocketConfig): UseS
     }, [log]);
 
     // Enviar mensaje
-    const sendMessage = useCallback((message: Record<string, unknown>) => {
+    const sendMessage = useCallback((message: Record<string, unknown>): boolean => {
         if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
             log('warn', 'WebSocket no está conectado');
             return false;
@@ -358,7 +556,6 @@ export function useStreamingWebSocket(config: UseStreamingWebSocketConfig): UseS
 
             setState(prev => ({ ...prev, status: 'initializing' }));
 
-            // El procesamiento se iniciará automáticamente desde el backend
             log('info', 'Streaming iniciado exitosamente');
 
         } catch (error) {
@@ -464,3 +661,25 @@ export function useStreamingWebSocket(config: UseStreamingWebSocketConfig): UseS
         clearError
     };
 }
+
+// ✅ EXPORTAR TYPE GUARDS PARA USO EN COMPONENTES
+export {
+    isWebSocketMessageData,
+    isStreamingUpdateData,
+    isUploadProgressData,
+    isSystemMessageData
+};
+
+// ✅ EXPORTAR TIPOS PARA USO EN COMPONENTES
+export type {
+    StreamingFrame,
+    PlateDetection,
+    UniquePlate,
+    StreamingProgress,
+    StreamingState,
+    StreamingStatus,
+    StreamingOptions,
+    UseStreamingWebSocketConfig,
+    UseStreamingWebSocketReturn,
+    MessageHandler
+};

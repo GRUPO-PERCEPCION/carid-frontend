@@ -1,4 +1,3 @@
-// src/services/streamingApi.ts - Servicio para manejo de API de streaming
 export class StreamingApiService {
     private baseUrl: string;
     private wsBaseUrl: string;

@@ -1,26 +1,25 @@
-// src/pages/StreamingRecognition.tsx - VERSIÓN CORREGIDA
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { toast } from "@/components/ui/sonner";
+import { toast } from "sonner";
 import {
-  ArrowLeft, Video, VideoOff, Settings, Wifi, WifiOff, Upload,
+  ArrowLeft, Video, Settings, Wifi, WifiOff, Upload,
   Play, Pause, Square, Download, Eye, AlertCircle, CheckCircle,
-  Activity, Target, Zap, RefreshCw, Monitor, Clock, Terminal
+  Activity, Target, Zap, RefreshCw, Monitor, Clock, Terminal, Shield
 } from "lucide-react";
 import { Link } from "react-router-dom";
-import { useStreamingWebSocket } from "../hooks/useStreamingWebSocket";
+import {
+  useStreamingWebSocket,
+  isUploadProgressData,
+  isSystemMessageData,
+  type PlateDetection,
+  type UniquePlate,
+  type StreamingStatus
+} from "../hooks/useStreamingWebSocket";
 import { streamingApi } from "../services/streamingApi";
 import { StreamingDebugConsole } from "../components/StreamingDebugConsole";
-import {
-  StreamingStatus,
-  UploadProgressData,
-  SystemMessageData,
-  GenericWebSocketData,
-  isUploadProgressData,
-  isSystemMessageData
-} from "../types/streaming";
 
+// ✅ INTERFACES ESPECÍFICAS PARA EVITAR 'any'
 interface StatusInfo {
   color: string;
   icon: React.ComponentType<{ className?: string }>;
@@ -68,10 +67,84 @@ interface StreamingSettings {
   max_duration: number;
 }
 
+// ✅ INTERFACES PARA DATOS WEBSOCKET
+interface UploadProgressData {
+  progress: number;
+}
+
+interface SystemMessageData {
+  type: 'info' | 'warning' | 'error';
+  title?: string;
+  message: string;
+}
+
+interface StreamingUpdateData {
+  frame_info?: {
+    frame_number?: number;
+    timestamp?: number;
+    processing_time?: number;
+    success?: boolean;
+    roi_used?: boolean;
+    six_char_filter_applied?: boolean;
+    six_char_detections_in_frame?: number;
+  };
+  progress?: {
+    processed_frames?: number;
+    total_frames?: number;
+    progress_percent?: number;
+    processing_speed?: number;
+  };
+  current_detections?: PlateDetection[];
+  detection_summary?: {
+    total_detections?: number;
+    unique_plates_count?: number;
+    valid_plates_count?: number;
+    six_char_plates_count?: number;
+    frames_with_detections?: number;
+    best_plates?: UniquePlate[];
+    best_six_char_plates?: UniquePlate[];
+    latest_detections?: PlateDetection[];
+    detection_density?: number;
+    six_char_detection_rate?: number;
+    session_id?: string;
+  };
+  timing?: {
+    elapsed_time?: number;
+    estimated_remaining?: number;
+  };
+  enhancement_stats?: {
+    roi_processing?: boolean;
+    six_char_filter_active?: boolean;
+    total_six_char_detections?: number;
+    six_char_plates_found?: number;
+    six_char_detection_rate?: number;
+  };
+  frame_data?: {
+    image_base64?: string;
+    thumbnail_base64?: string;
+    original_size?: [number, number];
+    compressed_size?: number;
+    quality_used?: number;
+  };
+  quality_info?: {
+    current_quality?: number;
+    recommended_frame_skip?: number;
+    adaptive_enabled?: boolean;
+  };
+}
+
+interface EnhancementStats {
+  roi_processing: boolean;
+  six_char_filter_active: boolean;
+  total_six_char_detections: number;
+  six_char_plates_found: number;
+  six_char_detection_rate: number;
+}
+
 const StreamingRecognition: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // 🔧 ESTADO LOCAL ADICIONAL
+  // Estado local
   const [uploadProgress, setUploadProgress] = useState<number>(0);
   const [serverHealth, setServerHealth] = useState<ServerHealth | null>(null);
   const [activeSessions, setActiveSessions] = useState<ActiveSession[]>([]);
@@ -85,7 +158,10 @@ const StreamingRecognition: React.FC = () => {
     max_duration: 600
   });
 
-  // 🔌 HOOK DE WEBSOCKET
+  // ✅ NUEVO ESTADO PARA ESTADÍSTICAS DE MEJORAS
+  const [enhancementStats, setEnhancementStats] = useState<EnhancementStats | null>(null);
+
+  // Hook de WebSocket
   const {
     // Estado
     isConnected,
@@ -125,18 +201,24 @@ const StreamingRecognition: React.FC = () => {
     maxReconnectAttempts: 5
   });
 
-  // 🔧 FUNCIÓN DE DEBUG HELPER
+  // Función de debug helper
   const debugLog = useCallback((type: string, category: string, message: string, data?: unknown) => {
-    if (window.streamingDebug && window.streamingDebug[type as keyof typeof window.streamingDebug]) {
-      const debugFunction = window.streamingDebug[type as keyof typeof window.streamingDebug];
+    const windowWithDebug = window as typeof window & {
+      streamingDebug?: {
+        [key: string]: (category: string, message: string, data?: string) => void;
+      };
+    };
+
+    if (windowWithDebug.streamingDebug && windowWithDebug.streamingDebug[type]) {
+      const debugFunction = windowWithDebug.streamingDebug[type];
       if (typeof debugFunction === 'function') {
         debugFunction(category, message, JSON.stringify(data));
       }
     }
   }, []);
 
-  // 🎨 OBTENER INFORMACIÓN VISUAL DEL ESTADO
-  const getStatusInfo = (currentStatus: StreamingStatus): StatusInfo => {
+  // ✅ OBTENER INFORMACIÓN VISUAL DEL ESTADO CON TIPOS
+  const getStatusInfo = useCallback((currentStatus: StreamingStatus): StatusInfo => {
     const statusMap: Record<StreamingStatus, StatusInfo> = {
       connected: {
         color: 'text-green-400',
@@ -195,12 +277,12 @@ const StreamingRecognition: React.FC = () => {
     };
 
     return statusMap[currentStatus] || statusMap.disconnected;
-  };
+  }, []);
 
   const statusInfo = getStatusInfo(status);
   const StatusIcon = statusInfo.icon;
 
-  // 🔄 CARGAR INFORMACIÓN DEL SERVIDOR
+  // Cargar información del servidor
   const loadServerInfo = useCallback(async () => {
     try {
       debugLog('info', 'API', 'Cargando información del servidor');
@@ -223,7 +305,7 @@ const StreamingRecognition: React.FC = () => {
     }
   }, [debugLog]);
 
-  // 📁 MANEJAR SELECCIÓN DE ARCHIVO
+  // Manejar selección de archivo
   const handleFileSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -258,17 +340,17 @@ const StreamingRecognition: React.FC = () => {
       clearError();
       setUploadProgress(0);
 
-      debugLog('info', 'Upload', 'Iniciando proceso de streaming');
+      debugLog('info', 'Upload', 'Iniciando proceso de streaming mejorado (ROI + 6 chars)');
 
-      toast.info('Iniciando streaming', {
-        description: `Subiendo ${file.name}...`
+      toast.info('Iniciando streaming mejorado', {
+        description: `Subiendo ${file.name} con ROI central y filtro 6 caracteres...`
       });
 
       await startStreaming(file, streamingSettings);
 
-      debugLog('success', 'Upload', 'Video cargado exitosamente');
+      debugLog('success', 'Upload', 'Video cargado exitosamente para procesamiento mejorado');
       toast.success('Video cargado exitosamente', {
-        description: 'El procesamiento comenzará en breve'
+        description: 'El procesamiento con ROI y filtro 6 caracteres comenzará en breve'
       });
 
     } catch (err) {
@@ -280,7 +362,7 @@ const StreamingRecognition: React.FC = () => {
     }
   };
 
-  // 📥 MANEJAR DESCARGA
+  // Manejar descarga
   const handleDownload = async (format: 'json' | 'csv') => {
     try {
       debugLog('info', 'Download', `Iniciando descarga ${format.toUpperCase()}`);
@@ -294,7 +376,7 @@ const StreamingRecognition: React.FC = () => {
     }
   };
 
-  // 🔧 MANEJAR CONFIGURACIÓN
+  // Manejar configuración
   const handleSettingsChange = (key: keyof StreamingSettings, value: boolean | number) => {
     setStreamingSettings(prev => ({
       ...prev,
@@ -303,7 +385,7 @@ const StreamingRecognition: React.FC = () => {
     debugLog('info', 'Settings', `Configuración actualizada: ${key} = ${value}`);
   };
 
-  // 🔄 REFRESCAR CONEXIÓN
+  // Refrescar conexión
   const handleReconnect = () => {
     debugLog('info', 'Connection', 'Iniciando reconexión manual');
     disconnect();
@@ -315,7 +397,7 @@ const StreamingRecognition: React.FC = () => {
     }, 1000);
   };
 
-  // 🧹 LIMPIAR SESIÓN
+  // Limpiar sesión
   const handleClearSession = async () => {
     try {
       debugLog('info', 'Session', 'Limpiando sesión actual');
@@ -331,7 +413,38 @@ const StreamingRecognition: React.FC = () => {
     }
   };
 
-  // 📊 CONFIGURAR HANDLERS DE MENSAJES PERSONALIZADOS CON TYPE GUARDS
+  // ✅ HELPERS TIPADOS PARA PLACAS DE STREAMING
+  const getSixCharPlates = useCallback((): UniquePlate[] => {
+    return uniquePlates.filter((plate: UniquePlate) => plate.is_six_char_valid);
+  }, [uniquePlates]);
+
+  const getValidPlates = useCallback((): UniquePlate[] => {
+    return uniquePlates.filter((plate: UniquePlate) => plate.is_valid_format);
+  }, [uniquePlates]);
+
+  const getSixCharDetections = useCallback((): PlateDetection[] => {
+    return detections.filter((detection: PlateDetection) => detection.six_char_validated);
+  }, [detections]);
+
+  const getConfidenceColor = useCallback((confidence: number): string => {
+    if (confidence >= 0.8) return "text-green-400";
+    if (confidence >= 0.6) return "text-yellow-400";
+    return "text-red-400";
+  }, []);
+
+  const getSixCharIndicator = useCallback((plate: UniquePlate): JSX.Element | null => {
+    if (plate.is_six_char_valid) {
+      return (
+          <div className="flex items-center space-x-1 text-green-400">
+            <Shield className="w-4 h-4" />
+            <span className="text-xs font-semibold">6 CHARS</span>
+          </div>
+      );
+    }
+    return null;
+  }, []);
+
+  // ✅ CONFIGURAR HANDLERS DE MENSAJES CON TYPE GUARDS
   useEffect(() => {
     // Handler para updates de progreso de subida
     const unsubscribeUpload = onMessage('upload_progress', (data: unknown) => {
@@ -357,13 +470,28 @@ const StreamingRecognition: React.FC = () => {
       }
     });
 
-    // Handler para actualizaciones de streaming con casting seguro
+    // ✅ Handler para actualizaciones de streaming mejorado
     const unsubscribeStreaming = onMessage('streaming_update', (data: unknown) => {
-      const streamingData = data as GenericWebSocketData;
+      const streamingData = data as StreamingUpdateData;
+
+      // Actualizar estadísticas de mejoras
+      if (streamingData?.enhancement_stats) {
+        const stats: EnhancementStats = {
+          roi_processing: streamingData.enhancement_stats.roi_processing || false,
+          six_char_filter_active: streamingData.enhancement_stats.six_char_filter_active || false,
+          total_six_char_detections: streamingData.enhancement_stats.total_six_char_detections || 0,
+          six_char_plates_found: streamingData.enhancement_stats.six_char_plates_found || 0,
+          six_char_detection_rate: streamingData.enhancement_stats.six_char_detection_rate || 0
+        };
+        setEnhancementStats(stats);
+      }
+
       debugLog('websocket', 'Streaming Update', 'Actualización recibida', {
         frame: streamingData?.frame_info?.frame_number || 0,
         detections: Array.isArray(streamingData?.current_detections) ? streamingData.current_detections.length : 0,
-        progress: streamingData?.progress?.progress_percent || 0
+        progress: streamingData?.progress?.progress_percent || 0,
+        six_char_detections: streamingData?.frame_info?.six_char_detections_in_frame || 0,
+        roi_used: streamingData?.frame_info?.roi_used || false
       });
     });
 
@@ -374,41 +502,41 @@ const StreamingRecognition: React.FC = () => {
     };
   }, [onMessage, debugLog]);
 
-  // 🔄 CARGAR INFO INICIAL
+  // Cargar info inicial
   useEffect(() => {
     loadServerInfo();
-    debugLog('info', 'App', 'Aplicación de streaming inicializada');
+    debugLog('info', 'App', 'Aplicación de streaming mejorado inicializada');
 
-    // Actualizar cada 30 segundos
     const interval = setInterval(loadServerInfo, 30000);
     return () => clearInterval(interval);
   }, [loadServerInfo, debugLog]);
 
-  // 📊 LOGGING DE CAMBIOS DE ESTADO
+  // Logging de cambios de estado
   useEffect(() => {
     debugLog('info', 'State', `Estado cambiado a: ${status}`, {
       isConnected,
       isStreaming,
       sessionId,
       detections: detections.length,
-      uniquePlates: uniquePlates.length
+      uniquePlates: uniquePlates.length,
+      sixCharPlates: getSixCharPlates().length
     });
-  }, [status, isConnected, isStreaming, sessionId, detections.length, uniquePlates.length, debugLog]);
+  }, [status, isConnected, isStreaming, sessionId, detections.length, uniquePlates.length, getSixCharPlates, debugLog]);
 
-  // 🎯 FORMATEAR TIEMPO
-  const formatDuration = (seconds: number): string => {
+  // Formatear tiempo
+  const formatDuration = useCallback((seconds: number): string => {
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
     return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
+  }, []);
 
-  // 📈 CALCULAR TIEMPO ESTIMADO CON VALIDACIÓN
-  const getEstimatedTimeRemaining = (): string => {
+  // Calcular tiempo estimado
+  const getEstimatedTimeRemaining = useCallback((): string => {
     if (!progress || progress.percent <= 0 || processingSpeed <= 0) return '...';
 
     const remaining = (progress.total - progress.processed) / processingSpeed;
     return formatDuration(remaining);
-  };
+  }, [progress, processingSpeed, formatDuration]);
 
   return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-800">
@@ -434,6 +562,14 @@ const StreamingRecognition: React.FC = () => {
                   <Video className="w-5 h-5 text-white" />
                 </div>
                 <span className="text-lg font-bold text-white">Streaming en Tiempo Real</span>
+
+                {/* ✅ INDICADOR DE MEJORAS EN HEADER */}
+                {enhancementStats && (
+                    <div className="flex items-center space-x-2 bg-purple-500/20 border border-purple-500/30 rounded-lg px-3 py-1">
+                      <Shield className="w-4 h-4 text-purple-400" />
+                      <span className="text-xs text-purple-400">ROI + 6 CHARS</span>
+                    </div>
+                )}
               </div>
 
               <div className="flex items-center space-x-4">
@@ -447,7 +583,7 @@ const StreamingRecognition: React.FC = () => {
                   <Terminal className="w-4 h-4" />
                 </Button>
 
-                {/* Estado de conexión con health check */}
+                {/* Estado de conexión */}
                 <div className={`flex items-center space-x-2 px-3 py-1 rounded-lg ${statusInfo.bgColor} border`}>
                   <StatusIcon className={`w-4 h-4 ${statusInfo.color}`} />
                   <span className={`text-sm ${statusInfo.color}`}>{statusInfo.text}</span>
@@ -486,10 +622,10 @@ const StreamingRecognition: React.FC = () => {
             <div className="text-center mb-8">
               <h1 className="text-3xl font-bold text-white mb-2">Streaming en Tiempo Real</h1>
               <p className="text-gray-300">
-                Procesamiento de video con WebSocket bidireccional y control interactivo
+                Procesamiento con ROI central (10%) y filtro de 6 caracteres para placas peruanas
               </p>
 
-              {/* Estado del servidor */}
+              {/* Estado del servidor con info de mejoras */}
               {serverHealth && (
                   <div className="mt-4 flex items-center justify-center space-x-6 text-sm">
                     <div className="flex items-center space-x-2">
@@ -510,6 +646,14 @@ const StreamingRecognition: React.FC = () => {
                     GPU: {serverHealth.models?.device || 'CPU'}
                   </span>
                     </div>
+                    {enhancementStats && (
+                        <div className="flex items-center space-x-2">
+                          <Shield className="w-4 h-4 text-purple-400" />
+                          <span className="text-gray-400">
+                      6 chars: {enhancementStats.six_char_plates_found}/{enhancementStats.total_six_char_detections}
+                    </span>
+                        </div>
+                    )}
                   </div>
               )}
             </div>
@@ -543,14 +687,23 @@ const StreamingRecognition: React.FC = () => {
                   <CardContent className="p-6">
                     <div className="flex items-center justify-between mb-4">
                       <h3 className="text-lg font-bold text-white">Control de Streaming</h3>
-                      <Button
-                          onClick={() => setShowSettings(!showSettings)}
-                          variant="ghost"
-                          size="sm"
-                          className="text-gray-400 hover:text-white"
-                      >
-                        <Settings className="w-4 h-4" />
-                      </Button>
+                      <div className="flex items-center space-x-2">
+                        <Button
+                            onClick={() => setShowSettings(!showSettings)}
+                            variant="ghost"
+                            size="sm"
+                            className="text-gray-400 hover:text-white"
+                        >
+                          <Settings className="w-4 h-4" />
+                        </Button>
+                        {/* Indicador de mejoras en control */}
+                        {enhancementStats?.roi_processing && (
+                            <div className="flex items-center space-x-1 bg-purple-500/20 border border-purple-500/30 rounded px-2 py-1">
+                              <Shield className="w-3 h-3 text-purple-400" />
+                              <span className="text-xs text-purple-400">ROI</span>
+                            </div>
+                        )}
+                      </div>
                     </div>
 
                     {!isStreaming ? (
@@ -570,9 +723,9 @@ const StreamingRecognition: React.FC = () => {
                             <Upload className="w-6 h-6" />
                             <span className="text-lg">
                           {isUploading ? 'Subiendo Video...' :
-                              isInitializing ? 'Inicializando...' :
+                              isInitializing ? 'Inicializando ROI + 6 chars...' :
                                   !isConnected ? 'Conectando...' :
-                                      'Seleccionar Video y Comenzar'}
+                                      'Seleccionar Video (ROI + 6 chars)'}
                         </span>
                           </Button>
 
@@ -593,7 +746,10 @@ const StreamingRecognition: React.FC = () => {
                           )}
 
                           <div className="text-center text-sm text-gray-400">
-                            MP4, AVI, MOV, MKV, WebM (máx. 150MB)
+                            <p>MP4, AVI, MOV, MKV, WebM (máx. 150MB)</p>
+                            <p className="text-purple-400 text-xs mt-1">
+                              ✨ Con ROI central y filtro de 6 caracteres
+                            </p>
                           </div>
 
                           {!isConnected && (
@@ -663,7 +819,7 @@ const StreamingRecognition: React.FC = () => {
                 {showSettings && (
                     <Card className="bg-white/10 border-white/20 backdrop-blur-sm">
                       <CardContent className="p-6">
-                        <h3 className="text-lg font-bold text-white mb-4">Configuración</h3>
+                        <h3 className="text-lg font-bold text-white mb-4">Configuración Mejorada</h3>
 
                         <div className="space-y-4">
                           <div>
@@ -713,12 +869,24 @@ const StreamingRecognition: React.FC = () => {
                                 className="rounded"
                             />
                           </div>
+
+                          {/* Info de mejoras en configuración */}
+                          <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-3">
+                            <div className="text-sm text-purple-400">
+                              <p className="font-semibold mb-1">Mejoras activas:</p>
+                              <div className="space-y-1 text-xs">
+                                <div>• ROI central (10% de la imagen)</div>
+                                <div>• Filtro de 6 caracteres exactos</div>
+                                <div>• Validación de formato peruano</div>
+                              </div>
+                            </div>
+                          </div>
                         </div>
                       </CardContent>
                     </Card>
                 )}
 
-                {/* Progreso */}
+                {/* Progreso mejorado con stats de 6 chars */}
                 {isStreaming && (
                     <Card className="bg-white/10 border-white/20 backdrop-blur-sm">
                       <CardContent className="p-6">
@@ -753,6 +921,33 @@ const StreamingRecognition: React.FC = () => {
                             </div>
                           </div>
 
+                          {/* Estadísticas de 6 caracteres */}
+                          {enhancementStats && (
+                              <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-3">
+                                <div className="text-sm text-purple-400 space-y-1">
+                                  <div className="flex justify-between">
+                                    <span>Placas 6 chars:</span>
+                                    <span className="text-green-400 font-semibold">
+                                {enhancementStats.six_char_plates_found}
+                              </span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span>Detecciones 6 chars:</span>
+                                    <span className="text-white">
+                                {enhancementStats.total_six_char_detections}
+                              </span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span>Tasa éxito 6 chars:</span>
+                                    <span className="text-yellow-400">
+                                {(enhancementStats.six_char_detection_rate * 100).toFixed(1)}%
+                              </span>
+                                  </div>
+                                </div>
+                              </div>
+                          )}
+
+                          {/* Indicador de detecciones actuales mejorado */}
                           {detections.length > 0 && (
                               <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-3">
                                 <div className="flex items-center space-x-2 text-green-400">
@@ -761,6 +956,14 @@ const StreamingRecognition: React.FC = () => {
                               {detections.length} detección{detections.length !== 1 ? 'es' : ''} en frame actual
                             </span>
                                 </div>
+                                {getSixCharDetections().length > 0 && (
+                                    <div className="flex items-center space-x-2 text-purple-400 mt-1">
+                                      <Shield className="w-4 h-4" />
+                                      <span className="text-sm">
+                                {getSixCharDetections().length} con 6 caracteres válidos
+                              </span>
+                                    </div>
+                                )}
                               </div>
                           )}
                         </div>
@@ -768,14 +971,14 @@ const StreamingRecognition: React.FC = () => {
                     </Card>
                 )}
 
-                {/* Descargar Resultados */}
+                {/* Descargar resultados mejorado */}
                 {hasResults && (
                     <Card className="bg-white/10 border-white/20 backdrop-blur-sm">
                       <CardContent className="p-6">
                         <h3 className="text-lg font-bold text-white mb-4">
                           Exportar Resultados
                           <span className="text-sm text-gray-400 ml-2">
-                        ({uniquePlates.length} placas)
+                        ({uniquePlates.length} placas, {getSixCharPlates().length} con 6 chars)
                       </span>
                         </h3>
 
@@ -816,18 +1019,27 @@ const StreamingRecognition: React.FC = () => {
                   <CardContent className="p-6">
                     <div className="flex items-center justify-between mb-4">
                       <h3 className="text-lg font-bold text-white">Video en Tiempo Real</h3>
-                      {currentFrame && (
-                          <div className="flex items-center space-x-4 text-sm text-gray-400">
-                            <div className="flex items-center space-x-2">
-                              <Clock className="w-4 h-4" />
-                              <span>{currentFrame.processingTime.toFixed(1)}ms</span>
+                      <div className="flex items-center space-x-4">
+                        {currentFrame && (
+                            <div className="flex items-center space-x-4 text-sm text-gray-400">
+                              <div className="flex items-center space-x-2">
+                                <Clock className="w-4 h-4" />
+                                <span>{currentFrame.processingTime.toFixed(1)}ms</span>
+                              </div>
+                              <div className="flex items-center space-x-2">
+                                <Monitor className="w-4 h-4" />
+                                <span>Frame {currentFrame.frameNumber}</span>
+                              </div>
                             </div>
-                            <div className="flex items-center space-x-2">
-                              <Monitor className="w-4 h-4" />
-                              <span>Frame {currentFrame.frameNumber}</span>
+                        )}
+                        {/* Indicador de ROI en video */}
+                        {enhancementStats?.roi_processing && (
+                            <div className="flex items-center space-x-2 bg-purple-500/20 border border-purple-500/30 rounded px-2 py-1">
+                              <Shield className="w-3 h-3 text-purple-400" />
+                              <span className="text-xs text-purple-400">ROI 10%</span>
                             </div>
-                          </div>
-                      )}
+                        )}
+                      </div>
                     </div>
 
                     <div className="bg-black rounded-lg aspect-video relative overflow-hidden">
@@ -850,11 +1062,19 @@ const StreamingRecognition: React.FC = () => {
                               <span>EN VIVO</span>
                             </div>
 
-                            {/* Contador de detecciones en overlay */}
+                            {/* Contador de detecciones con info de 6 chars */}
                             {detections.length > 0 && (
-                                <div className="absolute bottom-2 left-2 bg-green-600/90 rounded px-3 py-1 text-xs text-white flex items-center space-x-2">
-                                  <Target className="w-3 h-3" />
-                                  <span>{detections.length} detección{detections.length !== 1 ? 'es' : ''}</span>
+                                <div className="absolute bottom-2 left-2 space-y-1">
+                                  <div className="bg-green-600/90 rounded px-3 py-1 text-xs text-white flex items-center space-x-2">
+                                    <Target className="w-3 h-3" />
+                                    <span>{detections.length} detección{detections.length !== 1 ? 'es' : ''}</span>
+                                  </div>
+                                  {getSixCharDetections().length > 0 && (
+                                      <div className="bg-purple-600/90 rounded px-3 py-1 text-xs text-white flex items-center space-x-2">
+                                        <Shield className="w-3 h-3" />
+                                        <span>{getSixCharDetections().length} con 6 chars</span>
+                                      </div>
+                                  )}
                                 </div>
                             )}
                           </div>
@@ -863,9 +1083,9 @@ const StreamingRecognition: React.FC = () => {
                             <div className="text-center">
                               <Eye className="w-16 h-16 text-gray-400 mx-auto mb-4" />
                               <p className="text-gray-400 text-lg">
-                                {isStreaming ? 'Procesando frames...' :
+                                {isStreaming ? 'Procesando frames con ROI...' :
                                     isUploading ? 'Subiendo video...' :
-                                        isInitializing ? 'Inicializando procesamiento...' :
+                                        isInitializing ? 'Inicializando ROI + 6 chars...' :
                                             !isConnected ? 'Conectando al servidor...' :
                                                 'Selecciona un video para comenzar'}
                               </p>
@@ -875,8 +1095,8 @@ const StreamingRecognition: React.FC = () => {
                                       <Activity className="w-5 h-5 animate-pulse" />
                                       <span>
                                   {isUploading ? 'Subiendo archivo...' :
-                                      isInitializing ? 'Preparando análisis...' :
-                                          'Analizando video...'}
+                                      isInitializing ? 'Preparando análisis ROI + 6 chars...' :
+                                          'Analizando video con mejoras...'}
                                 </span>
                                     </div>
                                   </div>
