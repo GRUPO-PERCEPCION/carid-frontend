@@ -1,3 +1,6 @@
+// src/pages/StreamingRecognition.tsx
+// ✅ VERSIÓN CORREGIDA CON LISTADO CORRECTO DE PLACAS DETECTADAS
+
 import React, { useState, useRef, useCallback, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -18,8 +21,9 @@ import {
 } from "../types/streaming";
 import { streamingApi } from "../services/streamingApi";
 import { StreamingDebugConsole } from "../components/StreamingDebugConsole";
+import PlatesSummaryCard from "../components/PlatesSummaryCard.tsx";
 
-// ✅ INTERFACES ESPECÍFICAS PARA EVITAR 'any'
+// ✅ INTERFACES CORREGIDAS Y ESPECÍFICAS
 interface StatusInfo {
   color: string;
   icon: React.ComponentType<{ className?: string }>;
@@ -67,17 +71,7 @@ interface StreamingSettings {
   max_duration: number;
 }
 
-// ✅ INTERFACES PARA DATOS WEBSOCKET
-interface UploadProgressData {
-  progress: number;
-}
-
-interface SystemMessageData {
-  type: 'info' | 'warning' | 'error';
-  title?: string;
-  message: string;
-}
-
+// ✅ INTERFACE CORREGIDA PARA DATOS WEBSOCKET
 interface StreamingUpdateData {
   frame_info?: {
     frame_number?: number;
@@ -87,6 +81,7 @@ interface StreamingUpdateData {
     roi_used?: boolean;
     six_char_filter_applied?: boolean;
     six_char_detections_in_frame?: number;
+    auto_formatted_detections_in_frame?: number;
   };
   progress?: {
     processed_frames?: number;
@@ -100,13 +95,36 @@ interface StreamingUpdateData {
     unique_plates_count?: number;
     valid_plates_count?: number;
     six_char_plates_count?: number;
+    auto_formatted_plates_count?: number;
     frames_with_detections?: number;
     best_plates?: UniquePlate[];
     best_six_char_plates?: UniquePlate[];
+    best_auto_formatted_plates?: UniquePlate[];
     latest_detections?: PlateDetection[];
     detection_density?: number;
     six_char_detection_rate?: number;
+    auto_formatted_rate?: number;
     session_id?: string;
+    // ✅ NUEVO: Información completa de placas
+    all_unique_plates?: UniquePlate[];
+  };
+  // ✅ NUEVO: Resumen completo de placas
+  all_plates_summary?: {
+    complete_list?: UniquePlate[];
+    count_by_confidence?: {
+      high: number;
+      medium: number;
+      low: number;
+    };
+    spatial_coverage?: {
+      regions_active: number;
+      distribution: Record<string, number>;
+    };
+    detection_metrics?: {
+      total_unique_plates: number;
+      plates_per_region: number;
+      avg_confidence: number;
+    };
   };
   timing?: {
     elapsed_time?: number;
@@ -115,9 +133,13 @@ interface StreamingUpdateData {
   enhancement_stats?: {
     roi_processing?: boolean;
     six_char_filter_active?: boolean;
+    auto_dash_formatting?: boolean;
     total_six_char_detections?: number;
+    total_auto_formatted_detections?: number;
     six_char_plates_found?: number;
+    auto_formatted_plates_found?: number;
     six_char_detection_rate?: number;
+    auto_formatted_rate?: number;
   };
   frame_data?: {
     image_base64?: string;
@@ -131,14 +153,43 @@ interface StreamingUpdateData {
     recommended_frame_skip?: number;
     adaptive_enabled?: boolean;
   };
+  // ✅ NUEVO: Análisis espacial
+  spatial_analysis?: {
+    regions_found?: Record<string, number>;
+    region_count?: number;
+  };
 }
 
+// ✅ INTERFACE CORREGIDA PARA ESTADÍSTICAS DE MEJORAS
 interface EnhancementStats {
   roi_processing: boolean;
   six_char_filter_active: boolean;
+  auto_dash_formatting: boolean;
   total_six_char_detections: number;
+  total_auto_formatted_detections: number;
   six_char_plates_found: number;
+  auto_formatted_plates_found: number;
   six_char_detection_rate: number;
+  auto_formatted_rate: number;
+}
+
+// ✅ INTERFACE PARA EL RESUMEN DE TODAS LAS PLACAS
+interface AllPlatesSummary {
+  complete_list: UniquePlate[];
+  count_by_confidence: {
+    high: number;
+    medium: number;
+    low: number;
+  };
+  spatial_coverage: {
+    regions_active: number;
+    distribution: Record<string, number>;
+  };
+  detection_metrics: {
+    total_unique_plates: number;
+    plates_per_region: number;
+    avg_confidence: number;
+  };
 }
 
 const StreamingRecognition: React.FC = () => {
@@ -158,8 +209,11 @@ const StreamingRecognition: React.FC = () => {
     max_duration: 600
   });
 
-  // ✅ NUEVO ESTADO PARA ESTADÍSTICAS DE MEJORAS
+  // ✅ ESTADOS CORREGIDOS PARA PLACAS Y ESTADÍSTICAS
   const [enhancementStats, setEnhancementStats] = useState<EnhancementStats | null>(null);
+  const [allPlatesSummary, setAllPlatesSummary] = useState<AllPlatesSummary | null>(null);
+  const [allUniquePlates, setAllUniquePlates] = useState<UniquePlate[]>([]);
+  const [spatialRegions, setSpatialRegions] = useState<Record<string, number>>({});
 
   // Hook de WebSocket
   const {
@@ -217,7 +271,7 @@ const StreamingRecognition: React.FC = () => {
     }
   }, []);
 
-  // ✅ OBTENER INFORMACIÓN VISUAL DEL ESTADO CON TIPOS
+  // ✅ FUNCIÓN CORREGIDA PARA OBTENER INFORMACIÓN VISUAL DEL ESTADO
   const getStatusInfo = useCallback((currentStatus: StreamingStatus): StatusInfo => {
     const statusMap: Record<StreamingStatus, StatusInfo> = {
       connected: {
@@ -282,6 +336,63 @@ const StreamingRecognition: React.FC = () => {
   const statusInfo = getStatusInfo(status);
   const StatusIcon = statusInfo.icon;
 
+  // ✅ FUNCIONES HELPER CORREGIDAS PARA PLACAS
+  const getSixCharPlates = useCallback((): UniquePlate[] => {
+    return allUniquePlates.filter((plate: UniquePlate) => plate.is_six_char_valid === true);
+  }, [allUniquePlates]);
+
+  const getValidPlates = useCallback((): UniquePlate[] => {
+    return allUniquePlates.filter((plate: UniquePlate) => plate.is_valid_format === true);
+  }, [allUniquePlates]);
+
+  const getAutoFormattedPlates = useCallback((): UniquePlate[] => {
+    return allUniquePlates.filter((plate: UniquePlate) =>
+        (plate as any).auto_formatted === true ||
+        (plate as any).is_auto_formatted === true
+    );
+  }, [allUniquePlates]);
+
+  const getSixCharDetections = useCallback((): PlateDetection[] => {
+    return detections.filter((detection: PlateDetection) => detection.six_char_validated === true);
+  }, [detections]);
+
+  const getConfidenceColor = useCallback((confidence: number): string => {
+    if (confidence >= 0.8) return "text-green-400";
+    if (confidence >= 0.6) return "text-yellow-400";
+    return "text-red-400";
+  }, []);
+
+  const getConfidenceLabel = useCallback((confidence: number): string => {
+    if (confidence >= 0.8) return "Alta";
+    if (confidence >= 0.6) return "Media";
+    return "Baja";
+  }, []);
+
+  const getSixCharIndicator = useCallback((plate: UniquePlate): JSX.Element | null => {
+    if (plate.is_six_char_valid) {
+      return (
+          <div className="flex items-center space-x-1 text-green-400">
+            <Shield className="w-4 h-4" />
+            <span className="text-xs font-semibold">6 CHARS</span>
+          </div>
+      );
+    }
+    return null;
+  }, []);
+
+  const getAutoFormattedIndicator = useCallback((plate: any): JSX.Element | null => {
+    const isAutoFormatted = plate.auto_formatted === true || plate.is_auto_formatted === true;
+    if (isAutoFormatted) {
+      return (
+          <div className="flex items-center space-x-1 text-blue-400">
+            <Zap className="w-4 h-4" />
+            <span className="text-xs font-semibold">AUTO</span>
+          </div>
+      );
+    }
+    return null;
+  }, []);
+
   // Cargar información del servidor
   const loadServerInfo = useCallback(async () => {
     try {
@@ -334,6 +445,12 @@ const StreamingRecognition: React.FC = () => {
       });
       return;
     }
+
+    // Limpiar estados anteriores
+    setAllUniquePlates([]);
+    setAllPlatesSummary(null);
+    setEnhancementStats(null);
+    setSpatialRegions({});
 
     // Iniciar streaming
     try {
@@ -405,6 +522,13 @@ const StreamingRecognition: React.FC = () => {
         await streamingApi.disconnectSession(sessionId);
       }
       disconnect();
+
+      // Limpiar todos los estados
+      setAllUniquePlates([]);
+      setAllPlatesSummary(null);
+      setEnhancementStats(null);
+      setSpatialRegions({});
+
       toast.success('Sesión limpiada');
       debugLog('success', 'Session', 'Sesión limpiada exitosamente');
     } catch (err) {
@@ -413,38 +537,7 @@ const StreamingRecognition: React.FC = () => {
     }
   };
 
-  // ✅ HELPERS TIPADOS PARA PLACAS DE STREAMING
-  const getSixCharPlates = useCallback((): UniquePlate[] => {
-    return uniquePlates.filter((plate: UniquePlate) => plate.is_six_char_valid);
-  }, [uniquePlates]);
-
-  const getValidPlates = useCallback((): UniquePlate[] => {
-    return uniquePlates.filter((plate: UniquePlate) => plate.is_valid_format);
-  }, [uniquePlates]);
-
-  const getSixCharDetections = useCallback((): PlateDetection[] => {
-    return detections.filter((detection: PlateDetection) => detection.six_char_validated);
-  }, [detections]);
-
-  const getConfidenceColor = useCallback((confidence: number): string => {
-    if (confidence >= 0.8) return "text-green-400";
-    if (confidence >= 0.6) return "text-yellow-400";
-    return "text-red-400";
-  }, []);
-
-  const getSixCharIndicator = useCallback((plate: UniquePlate): JSX.Element | null => {
-    if (plate.is_six_char_valid) {
-      return (
-          <div className="flex items-center space-x-1 text-green-400">
-            <Shield className="w-4 h-4" />
-            <span className="text-xs font-semibold">6 CHARS</span>
-          </div>
-      );
-    }
-    return null;
-  }, []);
-
-  // ✅ CONFIGURAR HANDLERS DE MENSAJES CON TYPE GUARDS
+  // ✅ CONFIGURAR HANDLERS DE MENSAJES CORREGIDOS
   useEffect(() => {
     // Handler para updates de progreso de subida
     const unsubscribeUpload = onMessage('upload_progress', (data: unknown) => {
@@ -470,29 +563,66 @@ const StreamingRecognition: React.FC = () => {
       }
     });
 
-    // ✅ Handler para actualizaciones de streaming mejorado
+    // ✅ HANDLER CORREGIDO PARA ACTUALIZACIONES DE STREAMING
     const unsubscribeStreaming = onMessage('streaming_update', (data: unknown) => {
       const streamingData = data as StreamingUpdateData;
-
-      // Actualizar estadísticas de mejoras
-      if (streamingData?.enhancement_stats) {
-        const stats: EnhancementStats = {
-          roi_processing: streamingData.enhancement_stats.roi_processing || false,
-          six_char_filter_active: streamingData.enhancement_stats.six_char_filter_active || false,
-          total_six_char_detections: streamingData.enhancement_stats.total_six_char_detections || 0,
-          six_char_plates_found: streamingData.enhancement_stats.six_char_plates_found || 0,
-          six_char_detection_rate: streamingData.enhancement_stats.six_char_detection_rate || 0
-        };
-        setEnhancementStats(stats);
-      }
 
       debugLog('websocket', 'Streaming Update', 'Actualización recibida', {
         frame: streamingData?.frame_info?.frame_number || 0,
         detections: Array.isArray(streamingData?.current_detections) ? streamingData.current_detections.length : 0,
         progress: streamingData?.progress?.progress_percent || 0,
         six_char_detections: streamingData?.frame_info?.six_char_detections_in_frame || 0,
+        auto_formatted_detections: streamingData?.frame_info?.auto_formatted_detections_in_frame || 0,
         roi_used: streamingData?.frame_info?.roi_used || false
       });
+
+      // ✅ ACTUALIZAR ESTADÍSTICAS DE MEJORAS
+      if (streamingData?.enhancement_stats) {
+        const stats: EnhancementStats = {
+          roi_processing: streamingData.enhancement_stats.roi_processing || false,
+          six_char_filter_active: streamingData.enhancement_stats.six_char_filter_active || false,
+          auto_dash_formatting: streamingData.enhancement_stats.auto_dash_formatting || false,
+          total_six_char_detections: streamingData.enhancement_stats.total_six_char_detections || 0,
+          total_auto_formatted_detections: streamingData.enhancement_stats.total_auto_formatted_detections || 0,
+          six_char_plates_found: streamingData.enhancement_stats.six_char_plates_found || 0,
+          auto_formatted_plates_found: streamingData.enhancement_stats.auto_formatted_plates_found || 0,
+          six_char_detection_rate: streamingData.enhancement_stats.six_char_detection_rate || 0,
+          auto_formatted_rate: streamingData.enhancement_stats.auto_formatted_rate || 0
+        };
+        setEnhancementStats(stats);
+      }
+
+      // ✅ ACTUALIZAR TODAS LAS PLACAS ÚNICAS
+      if (streamingData?.all_plates_summary?.complete_list) {
+        const completeList = streamingData.all_plates_summary.complete_list;
+        setAllUniquePlates(completeList);
+
+        // Adaptar el objeto para cumplir con AllPlatesSummary (campos obligatorios)
+        const summary: AllPlatesSummary = {
+          complete_list: completeList,
+          count_by_confidence: streamingData.all_plates_summary.count_by_confidence ?? { high: 0, medium: 0, low: 0 },
+          spatial_coverage: streamingData.all_plates_summary.spatial_coverage ?? { regions_active: 0, distribution: {} },
+          detection_metrics: streamingData.all_plates_summary.detection_metrics ?? { total_unique_plates: 0, plates_per_region: 0, avg_confidence: 0 }
+        };
+        setAllPlatesSummary(summary);
+
+        debugLog('websocket', 'All Plates Update', `Todas las placas actualizadas: ${completeList.length}`, {
+          total: completeList.length,
+          sixChar: completeList.filter(p => p.is_six_char_valid).length,
+          valid: completeList.filter(p => p.is_valid_format).length
+        });
+      }
+
+      // ✅ ACTUALIZAR INFORMACIÓN ESPACIAL
+      if (streamingData?.spatial_analysis?.regions_found) {
+        setSpatialRegions(streamingData.spatial_analysis.regions_found);
+      }
+
+      // ✅ FALLBACK: Si no hay all_plates_summary, usar detection_summary
+      if (!streamingData?.all_plates_summary?.complete_list && streamingData?.detection_summary?.best_plates) {
+        setAllUniquePlates(streamingData.detection_summary.best_plates);
+        debugLog('websocket', 'Fallback Plates Update', `Fallback placas: ${streamingData.detection_summary.best_plates.length}`);
+      }
     });
 
     return () => {
@@ -519,9 +649,11 @@ const StreamingRecognition: React.FC = () => {
       sessionId,
       detections: detections.length,
       uniquePlates: uniquePlates.length,
-      sixCharPlates: getSixCharPlates().length
+      allUniquePlates: allUniquePlates.length,
+      sixCharPlates: getSixCharPlates().length,
+      autoFormattedPlates: getAutoFormattedPlates().length
     });
-  }, [status, isConnected, isStreaming, sessionId, detections.length, uniquePlates.length, getSixCharPlates, debugLog]);
+  }, [status, isConnected, isStreaming, sessionId, detections.length, uniquePlates.length, allUniquePlates.length, getSixCharPlates, getAutoFormattedPlates, debugLog]);
 
   // Formatear tiempo
   const formatDuration = useCallback((seconds: number): string => {
@@ -537,6 +669,18 @@ const StreamingRecognition: React.FC = () => {
     const remaining = (progress.total - progress.processed) / processingSpeed;
     return formatDuration(remaining);
   }, [progress, processingSpeed, formatDuration]);
+
+  // ✅ CALCULAR ESTADÍSTICAS DINÁMICAS
+  const dynamicStats = {
+    totalPlates: allUniquePlates.length,
+    sixCharPlates: getSixCharPlates().length,
+    validPlates: getValidPlates().length,
+    autoFormattedPlates: getAutoFormattedPlates().length,
+    spatialRegionsCount: Object.keys(spatialRegions).length,
+    highConfidencePlates: allUniquePlates.filter(p => p.best_confidence >= 0.8).length,
+    mediumConfidencePlates: allUniquePlates.filter(p => p.best_confidence >= 0.6 && p.best_confidence < 0.8).length,
+    lowConfidencePlates: allUniquePlates.filter(p => p.best_confidence < 0.6).length
+  };
 
   return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-800">
@@ -563,11 +707,19 @@ const StreamingRecognition: React.FC = () => {
                 </div>
                 <span className="text-lg font-bold text-white">Streaming en Tiempo Real</span>
 
-                {/* ✅ INDICADOR DE MEJORAS EN HEADER */}
+                {/* ✅ INDICADOR MEJORADO DE MEJORAS EN HEADER */}
                 {enhancementStats && (
-                    <div className="flex items-center space-x-2 bg-purple-500/20 border border-purple-500/30 rounded-lg px-3 py-1">
-                      <Shield className="w-4 h-4 text-purple-400" />
-                      <span className="text-xs text-purple-400">ROI + 6 CHARS</span>
+                    <div className="flex items-center space-x-3">
+                      <div className="flex items-center space-x-2 bg-purple-500/20 border border-purple-500/30 rounded-lg px-3 py-1">
+                        <Shield className="w-4 h-4 text-purple-400" />
+                        <span className="text-xs text-purple-400">ROI + 6 CHARS</span>
+                      </div>
+                      {dynamicStats.totalPlates > 0 && (
+                          <div className="flex items-center space-x-2 bg-green-500/20 border border-green-500/30 rounded-lg px-3 py-1">
+                            <Target className="w-4 h-4 text-green-400" />
+                            <span className="text-xs text-green-400">{dynamicStats.totalPlates} placas</span>
+                          </div>
+                      )}
                     </div>
                 )}
               </div>
@@ -625,7 +777,7 @@ const StreamingRecognition: React.FC = () => {
                 Procesamiento con ROI central (10%) y filtro de 6 caracteres para placas peruanas
               </p>
 
-              {/* Estado del servidor con info de mejoras */}
+              {/* ✅ ESTADO DEL SERVIDOR MEJORADO CON INFO DE PLACAS */}
               {serverHealth && (
                   <div className="mt-4 flex items-center justify-center space-x-6 text-sm">
                     <div className="flex items-center space-x-2">
@@ -646,11 +798,11 @@ const StreamingRecognition: React.FC = () => {
                     GPU: {serverHealth.models?.device || 'CPU'}
                   </span>
                     </div>
-                    {enhancementStats && (
+                    {enhancementStats && dynamicStats.totalPlates > 0 && (
                         <div className="flex items-center space-x-2">
                           <Shield className="w-4 h-4 text-purple-400" />
                           <span className="text-gray-400">
-                      6 chars: {enhancementStats.six_char_plates_found}/{enhancementStats.total_six_char_detections}
+                      Placas: {dynamicStats.totalPlates} ({dynamicStats.sixCharPlates} con 6 chars)
                     </span>
                         </div>
                     )}
@@ -878,6 +1030,7 @@ const StreamingRecognition: React.FC = () => {
                                 <div>• ROI central (10% de la imagen)</div>
                                 <div>• Filtro de 6 caracteres exactos</div>
                                 <div>• Validación de formato peruano</div>
+                                <div>• Formato automático con guión</div>
                               </div>
                             </div>
                           </div>
@@ -886,7 +1039,7 @@ const StreamingRecognition: React.FC = () => {
                     </Card>
                 )}
 
-                {/* Progreso mejorado con stats de 6 chars */}
+                {/* ✅ PROGRESO MEJORADO CON STATS DE 6 CHARS Y PLACAS TOTALES */}
                 {isStreaming && (
                     <Card className="bg-white/10 border-white/20 backdrop-blur-sm">
                       <CardContent className="p-6">
@@ -921,6 +1074,47 @@ const StreamingRecognition: React.FC = () => {
                             </div>
                           </div>
 
+                          {/* ✅ ESTADÍSTICAS COMPLETAS DE PLACAS DETECTADAS */}
+                          {dynamicStats.totalPlates > 0 && (
+                              <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-3">
+                                <div className="text-sm space-y-2">
+                                  <div className="flex justify-between text-green-400">
+                                    <span className="font-semibold">Placas detectadas:</span>
+                                    <span className="font-bold">{dynamicStats.totalPlates}</span>
+                                  </div>
+
+                                  <div className="grid grid-cols-2 gap-2 text-xs">
+                                    <div className="flex justify-between">
+                                      <span className="text-gray-400">6 caracteres:</span>
+                                      <span className="text-green-400 font-semibold">{dynamicStats.sixCharPlates}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                      <span className="text-gray-400">Válidas:</span>
+                                      <span className="text-yellow-400">{dynamicStats.validPlates}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                      <span className="text-gray-400">Auto-format:</span>
+                                      <span className="text-blue-400">{dynamicStats.autoFormattedPlates}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                      <span className="text-gray-400">Regiones:</span>
+                                      <span className="text-purple-400">{dynamicStats.spatialRegionsCount}</span>
+                                    </div>
+                                  </div>
+
+                                  {/* Distribución por confianza */}
+                                  <div className="border-t border-green-500/20 pt-2 mt-2">
+                                    <div className="text-xs text-gray-400 mb-1">Distribución por confianza:</div>
+                                    <div className="flex justify-between text-xs">
+                                      <span className="text-green-400">Alta: {dynamicStats.highConfidencePlates}</span>
+                                      <span className="text-yellow-400">Media: {dynamicStats.mediumConfidencePlates}</span>
+                                      <span className="text-red-400">Baja: {dynamicStats.lowConfidencePlates}</span>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                          )}
+
                           {/* Estadísticas de 6 caracteres */}
                           {enhancementStats && (
                               <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-3">
@@ -938,6 +1132,12 @@ const StreamingRecognition: React.FC = () => {
                               </span>
                                   </div>
                                   <div className="flex justify-between">
+                                    <span>Auto-formateadas:</span>
+                                    <span className="text-blue-400">
+                                {enhancementStats.auto_formatted_plates_found}
+                              </span>
+                                  </div>
+                                  <div className="flex justify-between">
                                     <span>Tasa éxito 6 chars:</span>
                                     <span className="text-yellow-400">
                                 {(enhancementStats.six_char_detection_rate * 100).toFixed(1)}%
@@ -949,8 +1149,8 @@ const StreamingRecognition: React.FC = () => {
 
                           {/* Indicador de detecciones actuales mejorado */}
                           {detections.length > 0 && (
-                              <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-3">
-                                <div className="flex items-center space-x-2 text-green-400">
+                              <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3">
+                                <div className="flex items-center space-x-2 text-blue-400">
                                   <CheckCircle className="w-4 h-4" />
                                   <span className="text-sm">
                               {detections.length} detección{detections.length !== 1 ? 'es' : ''} en frame actual
@@ -971,14 +1171,14 @@ const StreamingRecognition: React.FC = () => {
                     </Card>
                 )}
 
-                {/* Descargar resultados mejorado */}
-                {hasResults && (
+                {/* ✅ DESCARGAR RESULTADOS MEJORADO CON INFO COMPLETA */}
+                {dynamicStats.totalPlates > 0 && (
                     <Card className="bg-white/10 border-white/20 backdrop-blur-sm">
                       <CardContent className="p-6">
                         <h3 className="text-lg font-bold text-white mb-4">
                           Exportar Resultados
                           <span className="text-sm text-gray-400 ml-2">
-                        ({uniquePlates.length} placas, {getSixCharPlates().length} con 6 chars)
+                        ({dynamicStats.totalPlates} placas, {dynamicStats.sixCharPlates} con 6 chars)
                       </span>
                         </h3>
 
@@ -1077,6 +1277,14 @@ const StreamingRecognition: React.FC = () => {
                                   )}
                                 </div>
                             )}
+
+                            {/* ✅ NUEVO: Contador de placas totales detectadas */}
+                            {dynamicStats.totalPlates > 0 && (
+                                <div className="absolute bottom-2 right-2 bg-blue-600/90 rounded px-3 py-1 text-xs text-white flex items-center space-x-2">
+                                  <Target className="w-3 h-3" />
+                                  <span>Total: {dynamicStats.totalPlates}</span>
+                                </div>
+                            )}
                           </div>
                       ) : (
                           <div className="absolute inset-0 flex items-center justify-center">
@@ -1108,7 +1316,7 @@ const StreamingRecognition: React.FC = () => {
                   </CardContent>
                 </Card>
 
-                {/* Detecciones del Frame Actual */}
+                {/* ✅ DETECCIONES DEL FRAME ACTUAL MEJORADAS */}
                 {detections.length > 0 && (
                     <Card className="bg-white/10 border-white/20 backdrop-blur-sm">
                       <CardContent className="p-6">
@@ -1122,11 +1330,19 @@ const StreamingRecognition: React.FC = () => {
                                 <div className="flex items-center justify-between mb-2">
                                   <div className="flex items-center space-x-3">
                                     <span className="text-white font-mono text-lg">{detection.plate_text}</span>
-                                    {detection.is_valid_plate && (
-                                        <CheckCircle className="w-5 h-5 text-green-400" />
-                                    )}
+                                    <div className="flex items-center space-x-2">
+                                      {detection.six_char_validated && (
+                                          <div className="flex items-center space-x-1 text-green-400">
+                                            <Shield className="w-4 h-4" />
+                                            <span className="text-xs font-semibold">6 CHARS</span>
+                                          </div>
+                                      )}
+                                      {detection.is_valid_plate && (
+                                          <CheckCircle className="w-4 h-4 text-yellow-400" />
+                                      )}
+                                    </div>
                                   </div>
-                                  <span className="text-green-400 text-sm font-semibold">
+                                  <span className={`text-sm font-semibold ${getConfidenceColor(detection.overall_confidence)}`}>
                               {(detection.overall_confidence * 100).toFixed(1)}%
                             </span>
                                 </div>
@@ -1139,7 +1355,11 @@ const StreamingRecognition: React.FC = () => {
 
                                 <div className="w-full bg-white/10 rounded-full h-2">
                                   <div
-                                      className="bg-gradient-to-r from-green-500 to-blue-500 h-2 rounded-full transition-all"
+                                      className={`h-2 rounded-full transition-all ${
+                                          detection.six_char_validated
+                                              ? 'bg-gradient-to-r from-green-500 to-green-400'
+                                              : 'bg-gradient-to-r from-blue-500 to-blue-400'
+                                      }`}
                                       style={{ width: `${Math.min(detection.overall_confidence * 100, 100)}%` }}
                                   />
                                 </div>
@@ -1156,55 +1376,19 @@ const StreamingRecognition: React.FC = () => {
                     </Card>
                 )}
 
-                {/* Placas Únicas Acumuladas */}
-                {uniquePlates.length > 0 && (
-                    <Card className="bg-white/10 border-white/20 backdrop-blur-sm">
-                      <CardContent className="p-6">
-                        <h3 className="text-lg font-bold text-white mb-4">
-                          Placas Únicas Detectadas ({uniquePlates.length})
-                        </h3>
-
-                        <div className="grid md:grid-cols-2 gap-4">
-                          {uniquePlates.slice(0, 8).map((plate, index) => (
-                              <div key={`${plate.plate_text}-${index}`} className="bg-white/5 rounded-lg p-4 border border-white/10">
-                                <div className="flex items-center justify-between mb-2">
-                                  <div className="flex items-center space-x-2">
-                                    <span className="text-white font-mono text-lg">{plate.plate_text}</span>
-                                    {plate.is_valid_format && (
-                                        <CheckCircle className="w-4 h-4 text-green-400" />
-                                    )}
-                                  </div>
-                                  <span className="text-green-400 text-sm">
-                              {(plate.best_confidence * 100).toFixed(1)}%
-                            </span>
-                                </div>
-
-                                <div className="flex items-center justify-between text-xs text-gray-400 mb-2">
-                                  <span>Detecciones: {plate.detection_count}</span>
-                                  <span>Frames: {plate.first_seen_frame}-{plate.last_seen_frame}</span>
-                                </div>
-
-                                <div className="w-full bg-white/10 rounded-full h-2">
-                                  <div
-                                      className="bg-gradient-to-r from-blue-500 to-green-500 h-2 rounded-full transition-all"
-                                      style={{ width: `${Math.min(plate.best_confidence * 100, 100)}%` }}
-                                  />
-                                </div>
-                              </div>
-                          ))}
-                        </div>
-
-                        {uniquePlates.length > 8 && (
-                            <div className="mt-4 text-center text-sm text-gray-400">
-                              ... y {uniquePlates.length - 8} placas más
-                            </div>
-                        )}
-                      </CardContent>
-                    </Card>
+                {/* ✅ PLACAS ÚNICAS ACUMULADAS - USANDO COMPONENTE MEJORADO */}
+                {allUniquePlates.length > 0 && (
+                    <PlatesSummaryCard
+                        allUniquePlates={allUniquePlates}
+                        spatialRegions={spatialRegions}
+                        enhancementStats={enhancementStats}
+                        isStreaming={isStreaming}
+                        onExportData={handleDownload}
+                    />
                 )}
 
-                {/* Mensaje cuando no hay detecciones */}
-                {isStreaming && detections.length === 0 && uniquePlates.length === 0 && (
+                {/* ✅ MENSAJE CUANDO NO HAY DETECCIONES - MEJORADO */}
+                {isStreaming && detections.length === 0 && allUniquePlates.length === 0 && (
                     <Card className="bg-white/10 border-white/20 backdrop-blur-sm">
                       <CardContent className="p-6">
                         <div className="text-center py-8">
@@ -1217,6 +1401,60 @@ const StreamingRecognition: React.FC = () => {
                             <span>Frame: {currentFrame?.frameNumber || 0}</span>
                             <span>•</span>
                             <span>Velocidad: {processingSpeed.toFixed(1)} fps</span>
+                            <span>•</span>
+                            <span>ROI: {enhancementStats?.roi_processing ? 'Activo' : 'Inactivo'}</span>
+                          </div>
+                          {enhancementStats && (
+                              <div className="mt-3 bg-purple-500/10 border border-purple-500/20 rounded-lg p-3 text-xs">
+                                <div className="text-purple-400">
+                                  <p>Sistema de mejoras activo:</p>
+                                  <div className="flex justify-center space-x-4 mt-1">
+                                    <span>• ROI central (10%)</span>
+                                    <span>• Filtro 6 caracteres</span>
+                                    <span>• Auto-formateo</span>
+                                  </div>
+                                </div>
+                              </div>
+                          )}
+                        </div>
+                      </CardContent>
+                    </Card>
+                )}
+
+                {/* ✅ MENSAJE DE ESTADO CUANDO NO HAY STREAMING */}
+                {!isStreaming && !isUploading && !isInitializing && (
+                    <Card className="bg-white/10 border-white/20 backdrop-blur-sm">
+                      <CardContent className="p-6">
+                        <div className="text-center py-12">
+                          <Video className="w-16 h-16 text-gray-400 mx-auto mb-4" />
+                          <h3 className="text-xl font-semibold text-white mb-2">
+                            Sistema de Streaming Mejorado Listo
+                          </h3>
+                          <p className="text-gray-400 mb-4">
+                            Selecciona un video para comenzar el procesamiento con ROI central y filtro de 6 caracteres
+                          </p>
+                          <div className="bg-purple-500/10 border border-purple-500/20 rounded-lg p-4">
+                            <div className="text-sm text-purple-400">
+                              <p className="font-semibold mb-2">Características del sistema mejorado:</p>
+                              <div className="grid grid-cols-2 gap-2 text-xs">
+                                <div className="flex items-center space-x-2">
+                                  <Shield className="w-3 h-3" />
+                                  <span>ROI central (10% de la imagen)</span>
+                                </div>
+                                <div className="flex items-center space-x-2">
+                                  <Target className="w-3 h-3" />
+                                  <span>Filtro de 6 caracteres exactos</span>
+                                </div>
+                                <div className="flex items-center space-x-2">
+                                  <Zap className="w-3 h-3" />
+                                  <span>Auto-formateo con guión</span>
+                                </div>
+                                <div className="flex items-center space-x-2">
+                                  <CheckCircle className="w-3 h-3" />
+                                  <span>Validación formato peruano</span>
+                                </div>
+                              </div>
+                            </div>
                           </div>
                         </div>
                       </CardContent>
