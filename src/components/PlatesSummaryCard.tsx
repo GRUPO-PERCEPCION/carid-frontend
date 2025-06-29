@@ -1,5 +1,6 @@
 // src/components/PlatesSummaryCard.tsx
 // ✅ COMPONENTE PARA MOSTRAR RESUMEN COMPLETO DE TODAS LAS PLACAS DETECTADAS
+// Versión sin modificaciones para evitar errores
 
 import React, { useState, useMemo } from 'react';
 import { Card, CardContent } from "@/components/ui/card";

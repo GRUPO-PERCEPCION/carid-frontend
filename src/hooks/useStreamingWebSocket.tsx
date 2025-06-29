@@ -220,37 +220,47 @@ export function useStreamingWebSocket(config: UseStreamingWebSocketConfig): UseS
                 });
             }
 
-            // ✅ 4. ACTUALIZAR TODAS LAS PLACAS ÚNICAS (PRIORIDAD ALTA)
+            // ✅ 4. CORRECCIÓN CRÍTICA: ACTUALIZAR TODAS LAS PLACAS ÚNICAS
             if (updateData.all_plates_summary?.complete_list) {
                 plateUpdateCountRef.current += 1;
                 const completeList = updateData.all_plates_summary.complete_list;
 
-                newState.allUniquePlates = completeList;
-                newState.uniquePlates = completeList.slice(0, 10); // Mantener compatibilidad con uniquePlates original
-                platesUpdated = true;
+                // ✅ VERIFICACIÓN DE SEGURIDAD
+                if (Array.isArray(completeList)) {
+                    // ✅ CORRECCIÓN: Usar el array directamente del backend sin modificaciones
+                    // El backend ya maneja la deduplicación correctamente
+                    newState.allUniquePlates = completeList;
+                    newState.uniquePlates = completeList.slice(0, 10); // Mantener compatibilidad
+                    platesUpdated = true;
 
-                console.log(`%c🏆 ALL PLATES UPDATED #${plateUpdateCountRef.current}`, 'color: #8b5cf6; font-weight: bold', {
-                    totalPlates: completeList.length,
-                    sixCharPlates: completeList.filter(p => p.is_six_char_valid).length,
-                    validPlates: completeList.filter(p => p.is_valid_format).length,
-                    autoFormattedPlates: completeList.filter(p => (p as any).auto_formatted || (p as any).is_auto_formatted).length
-                });
+                    console.log(`%c🏆 ALL PLATES UPDATED #${plateUpdateCountRef.current}`, 'color: #8b5cf6; font-weight: bold', {
+                        totalPlates: completeList.length,
+                        sixCharPlates: completeList.filter(p => p.is_six_char_valid).length,
+                        validPlates: completeList.filter(p => p.is_valid_format).length,
+                        autoFormattedPlates: completeList.filter(p => (p as any).auto_formatted || (p as any).is_auto_formatted).length
+                    });
+                } else {
+                    console.warn('⚠️ complete_list no es un array válido:', completeList);
+                }
             }
             // Fallback: usar detection_summary si no hay all_plates_summary
             else if (updateData.detection_summary?.best_plates) {
                 const bestPlates = updateData.detection_summary.best_plates;
-                newState.uniquePlates = bestPlates;
 
-                // Si no tenemos allUniquePlates, usar bestPlates como fallback
-                if (newState.allUniquePlates.length === 0) {
-                    newState.allUniquePlates = bestPlates;
+                if (Array.isArray(bestPlates)) {
+                    newState.uniquePlates = bestPlates;
+
+                    // Si no tenemos allUniquePlates, usar bestPlates como fallback
+                    if (newState.allUniquePlates.length === 0) {
+                        newState.allUniquePlates = bestPlates;
+                    }
+
+                    platesUpdated = true;
+                    console.log(`%c🥈 FALLBACK PLATES UPDATED`, 'color: #f59e0b', {
+                        bestPlates: bestPlates.length,
+                        usingAsFallback: newState.allUniquePlates.length === bestPlates.length
+                    });
                 }
-
-                platesUpdated = true;
-                console.log(`%c🥈 FALLBACK PLATES UPDATED`, 'color: #f59e0b', {
-                    bestPlates: bestPlates.length,
-                    usingAsFallback: newState.allUniquePlates.length === bestPlates.length
-                });
             }
 
             // ✅ 5. ACTUALIZAR INFORMACIÓN ESPACIAL
