@@ -7,6 +7,7 @@ import {
   AlertCircle, CheckCircle, Zap, Eye, Clock, Film, Shield
 } from "lucide-react";
 import { Link } from "react-router-dom";
+import {streamingApi} from "@/services/streamingApi.ts";
 
 // Interfaces TypeScript bien definidas
 interface UniquePlate {
@@ -126,7 +127,7 @@ const VideoRecognition: React.FC = () => {
   const progressIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const API_BASE_URL = "http://localhost:8000";
+  const API_BASE_URL = streamingApi.baseUrl;
 
   // Cleanup effect
   useEffect(() => {

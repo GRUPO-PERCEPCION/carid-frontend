@@ -7,6 +7,7 @@ import {
   AlertCircle, CheckCircle, Zap, Eye, Clock, Shield, FileText
 } from "lucide-react";
 import { Link } from "react-router-dom";
+import {streamingApi} from "@/services/streamingApi.ts";
 
 // Tipos TypeScript para evitar any
 interface PlateDetection {
@@ -86,7 +87,7 @@ const ImageRecognition: React.FC = () => {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const API_BASE_URL = "http://localhost:8000";
+  const API_BASE_URL = streamingApi.baseUrl;
 
   const handleFileSelect = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];

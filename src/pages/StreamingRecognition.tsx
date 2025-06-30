@@ -249,8 +249,8 @@ const StreamingRecognition: React.FC = () => {
     connect,
     disconnect
   } = useStreamingWebSocket({
-    wsBaseUrl: 'ws://localhost:8000',
-    apiBaseUrl: 'http://localhost:8000',
+    wsBaseUrl: streamingApi.wsBaseUrl,
+    apiBaseUrl: streamingApi.baseUrl,
     reconnectInterval: 3000,
     maxReconnectAttempts: 5
   });

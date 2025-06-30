@@ -68,7 +68,7 @@ export function useStreamingWebSocket(config: UseStreamingWebSocketConfig): UseS
     const plateUpdateCountRef = useRef(0);
 
     // Configuración
-    const wsBaseUrl = config.wsBaseUrl || 'ws://localhost:8000';
+    const wsBaseUrl = config.wsBaseUrl || streamingApi.wsBaseUrl;
     const reconnectInterval = config.reconnectInterval || 3000;
     const maxReconnectAttempts = config.maxReconnectAttempts || 5;
 

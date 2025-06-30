@@ -1,18 +1,99 @@
 export class StreamingApiService {
-    private baseUrl: string;
-    private wsBaseUrl: string;
+    private _baseUrl: string;
+    private _wsBaseUrl: string;
 
-    constructor(
-        baseUrl: string = 'http://localhost:8000',
-        wsBaseUrl: string = 'ws://localhost:8000'
-    ) {
-        this.baseUrl = baseUrl;
-        this.wsBaseUrl = wsBaseUrl;
+    constructor(baseUrl?: string, wsBaseUrl?: string) {
+        // URL que te dio ngrok para el puerto 8000
+        this._baseUrl = " https://8140-2001-1388-24ae-3d01-4d1d-c72a-9e7f-d1b3.ngrok-free.app";
+
+        // Usa la misma URL pero con el protocolo wss:// para WebSockets
+        this._wsBaseUrl = "wss://8140-2001-1388-24ae-3d01-4d1d-c72a-9e7f-d1b3.ngrok-free.app";
+
+        console.log('🌐 API Base URL:', this._baseUrl);
+        console.log('🔌 WebSocket URL:', this._wsBaseUrl);
+    }
+
+    // 🔓 GETTERS PÚBLICOS para que los componentes puedan acceder
+    get baseUrl(): string {
+        return this._baseUrl;
+    }
+
+    get wsBaseUrl(): string {
+        return this._wsBaseUrl;
+    }
+
+    // 🎯 MÉTODO PARA DETECTAR URL AUTOMÁTICAMENTE
+    private getApiBaseUrl(customUrl?: string): string {
+        if (customUrl) return customUrl;
+
+        // Si estamos en ngrok (no localhost)
+        if (window.location.hostname !== 'localhost' &&
+            window.location.hostname !== '127.0.0.1') {
+            return `${window.location.protocol}//${window.location.hostname}`;
+        }
+
+        // Desarrollo local
+        return 'http://localhost:8000';
+    }
+
+    private getWsBaseUrl(customUrl?: string): string {
+        if (customUrl) return customUrl;
+
+        // Si estamos en ngrok
+        if (window.location.hostname !== 'localhost' &&
+            window.location.hostname !== '127.0.0.1') {
+            // Ngrok usa wss:// para HTTPS
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            return `${protocol}//${window.location.hostname}`;
+        }
+
+        // Desarrollo local
+        return 'ws://localhost:8000';
+    }
+
+    // 🧪 MÉTODO DE PRUEBA PARA NGROK
+    async testNgrok(): Promise<any> {
+        try {
+            const response = await this.makeApiRequest('/api/v1/test-ngrok');
+            console.log('✅ Test ngrok exitoso:', response);
+            return response;
+        } catch (error) {
+            console.error('❌ Test ngrok falló:', error);
+            throw error;
+        }
+    }
+
+    // 🔄 MÉTODO AUXILIAR PARA REQUESTS CON HEADERS NGROK
+    private async makeApiRequest(endpoint: string, options: RequestInit = {}): Promise<any> {
+        const url = `${this._baseUrl}${endpoint}`;
+
+        const defaultHeaders = {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'ngrok-skip-browser-warning': 'true'
+        };
+
+        const finalOptions: RequestInit = {
+            ...options,
+            headers: {
+                ...defaultHeaders,
+                ...options.headers
+            }
+        };
+
+        const response = await fetch(url, finalOptions);
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.detail?.message || errorData.message || `HTTP ${response.status}`);
+        }
+
+        return response.json();
     }
 
     // 🔌 CREAR WEBSOCKET CONNECTION
     createWebSocket(sessionId: string): WebSocket {
-        const wsUrl = `${this.wsBaseUrl}/api/v1/streaming/ws/${sessionId}`;
+        const wsUrl = `${this._wsBaseUrl}/api/v1/streaming/ws/${sessionId}`;
         console.log('🔌 Conectando a:', wsUrl);
         return new WebSocket(wsUrl);
     }
@@ -23,7 +104,6 @@ export class StreamingApiService {
         formData.append('session_id', sessionId);
         formData.append('file', file);
 
-        // Agregar opciones de procesamiento
         const defaultOptions: Required<StreamingOptions> = {
             confidence_threshold: 0.3,
             iou_threshold: 0.4,
@@ -31,7 +111,12 @@ export class StreamingApiService {
             max_duration: 600,
             send_all_frames: false,
             adaptive_quality: true,
-            enable_thumbnails: true
+            enable_thumbnails: true,
+            roi_enabled: false,
+            six_char_filter: false,
+            auto_dash_formatting: false,
+            roi_percentage: 0,
+            min_detection_frames: 0
         };
 
         const finalOptions = { ...defaultOptions, ...options };
@@ -42,11 +127,14 @@ export class StreamingApiService {
 
         const response = await fetch(`${this.baseUrl}/api/v1/streaming/upload`, {
             method: 'POST',
-            body: formData
+            body: formData,
+            headers: {
+                'ngrok-skip-browser-warning': 'true'
+            }
         });
 
         if (!response.ok) {
-            const errorData = await response.json();
+            const errorData = await response.json().catch(() => ({}));
             throw new Error(errorData.detail?.message || errorData.message || 'Error subiendo video');
         }
 
@@ -55,51 +143,29 @@ export class StreamingApiService {
 
     // 📋 OBTENER SESIONES ACTIVAS
     async getActiveSessions(): Promise<SessionListResponse> {
-        const response = await fetch(`${this.baseUrl}/api/v1/streaming/sessions`);
-
-        if (!response.ok) {
-            throw new Error('Error obteniendo sesiones activas');
-        }
-
-        return response.json();
+        return this.makeApiRequest('/api/v1/streaming/sessions');
     }
 
     // 📄 OBTENER INFO DE SESIÓN ESPECÍFICA
     async getSessionInfo(sessionId: string): Promise<SessionInfoResponse> {
-        const response = await fetch(`${this.baseUrl}/api/v1/streaming/sessions/${sessionId}`);
-
-        if (!response.ok) {
-            throw new Error(`Error obteniendo info de sesión ${sessionId}`);
-        }
-
-        return response.json();
+        return this.makeApiRequest(`/api/v1/streaming/sessions/${sessionId}`);
     }
 
     // 🗑️ CERRAR SESIÓN
     async disconnectSession(sessionId: string): Promise<void> {
-        const response = await fetch(`${this.baseUrl}/api/v1/streaming/sessions/${sessionId}`, {
+        await this.makeApiRequest(`/api/v1/streaming/sessions/${sessionId}`, {
             method: 'DELETE'
         });
-
-        if (!response.ok) {
-            throw new Error(`Error cerrando sesión ${sessionId}`);
-        }
     }
 
     // 🏥 HEALTH CHECK
     async getStreamingHealth(): Promise<HealthResponse> {
-        const response = await fetch(`${this.baseUrl}/api/v1/streaming/health`);
-
-        if (!response.ok) {
-            throw new Error('Error en health check de streaming');
-        }
-
-        return response.json();
+        return this.makeApiRequest('/api/v1/streaming/health');
     }
 
     // 📥 DESCARGAR RESULTADOS
     async downloadResults(sessionId: string, format: 'json' | 'csv' = 'json'): Promise<void> {
-        const url = `${this.baseUrl}/api/v1/streaming/sessions/${sessionId}/download?format=${format}&include_timeline=true`;
+        const url = `${this._baseUrl}/api/v1/streaming/sessions/${sessionId}/download?format=${format}&include_timeline=true`;
 
         const response = await fetch(url);
 
@@ -120,13 +186,7 @@ export class StreamingApiService {
 
     // 🧪 TEST DE CONECTIVIDAD
     async testConnection(): Promise<ConnectionTestResponse> {
-        const response = await fetch(`${this.baseUrl}/api/v1/streaming/test-connection`);
-
-        if (!response.ok) {
-            throw new Error('Error en test de conexión');
-        }
-
-        return response.json();
+        return this.makeApiRequest('/api/v1/streaming/test-connection');
     }
 }
 
