@@ -4,10 +4,10 @@ export class StreamingApiService {
 
     constructor(baseUrl?: string, wsBaseUrl?: string) {
         // URL que te dio ngrok para el puerto 8000
-        this._baseUrl = " https://8140-2001-1388-24ae-3d01-4d1d-c72a-9e7f-d1b3.ngrok-free.app";
+        this._baseUrl = "https://4eb8-2001-1388-24ae-3d01-f5f9-2399-12a0-4e60.ngrok-free.app";
 
         // Usa la misma URL pero con el protocolo wss:// para WebSockets
-        this._wsBaseUrl = "wss://8140-2001-1388-24ae-3d01-4d1d-c72a-9e7f-d1b3.ngrok-free.app";
+        this._wsBaseUrl = "wss://4eb8-2001-1388-24ae-3d01-f5f9-2399-12a0-4e60.ngrok-free.app";
 
         console.log('🌐 API Base URL:', this._baseUrl);
         console.log('🔌 WebSocket URL:', this._wsBaseUrl);

@@ -7,7 +7,7 @@ import {
   AlertCircle, CheckCircle, Zap, Eye, Clock, Film, Shield
 } from "lucide-react";
 import { Link } from "react-router-dom";
-import {streamingApi} from "@/services/streamingApi.ts";
+import { streamingApi } from "@/services/streamingApi.ts";
 
 // Interfaces TypeScript bien definidas
 interface UniquePlate {
@@ -107,7 +107,7 @@ interface QuickVideoResponse {
 }
 
 const VideoRecognition: React.FC = () => {
-  // Estados con tipos explícitos
+  // Estados con tipos explícitos y valores por defecto seguros
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [selectedVideo, setSelectedVideo] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
@@ -126,21 +126,31 @@ const VideoRecognition: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const progressIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const API_BASE_URL = streamingApi.baseUrl;
 
-  // Cleanup effect
+  // Cleanup effect mejorado
   useEffect(() => {
     return () => {
       if (progressIntervalRef.current) {
         clearInterval(progressIntervalRef.current);
       }
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      // Limpiar URLs de objetos
+      if (selectedVideo) {
+        URL.revokeObjectURL(selectedVideo);
+      }
     };
-  }, []);
+  }, [selectedVideo]);
 
   const handleFileSelect = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
+    try {
+      const file = event.target.files?.[0];
+      if (!file) return;
+
       const validTypes = ['video/mp4', 'video/avi', 'video/mov', 'video/mkv', 'video/webm'];
       if (!validTypes.includes(file.type)) {
         setError('Formato de video no soportado. Use MP4, AVI, MOV, MKV o WebM');
@@ -153,15 +163,25 @@ const VideoRecognition: React.FC = () => {
         return;
       }
 
+      // Limpiar video anterior
+      if (selectedVideo) {
+        URL.revokeObjectURL(selectedVideo);
+      }
+
       setSelectedFile(file);
       setSelectedVideo(URL.createObjectURL(file));
       resetResults();
+      setError(null);
+    } catch (err) {
+      console.error('Error seleccionando archivo:', err);
+      setError('Error al seleccionar el archivo');
     }
+
     // Limpiar input
     if (event.target) {
       event.target.value = '';
     }
-  }, []);
+  }, [selectedVideo]);
 
   const resetResults = useCallback(() => {
     setResults([]);
@@ -175,7 +195,7 @@ const VideoRecognition: React.FC = () => {
   }, []);
 
   const simulateProgress = useCallback((targetProgress: number, duration: number) => {
-    const steps = 50;
+    const steps = Math.max(10, Math.min(50, duration / 100)); // Entre 10 y 50 pasos
     const increment = targetProgress / steps;
     const interval = duration / steps;
     let currentStep = 0;
@@ -186,16 +206,26 @@ const VideoRecognition: React.FC = () => {
 
     progressIntervalRef.current = setInterval(() => {
       currentStep++;
-      setProgress(prev => Math.min(prev + increment, targetProgress));
+      setProgress(prev => {
+        const newProgress = prev + increment;
+        return Math.min(newProgress, targetProgress);
+      });
 
       if (currentStep >= steps && progressIntervalRef.current) {
         clearInterval(progressIntervalRef.current);
+        progressIntervalRef.current = null;
       }
     }, interval);
   }, []);
 
   const handleProcess = useCallback(async () => {
-    if (!selectedFile) return;
+    if (!selectedFile || isProcessing) return;
+
+    // Cancelar cualquier proceso anterior
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
 
     setIsProcessing(true);
     resetResults();
@@ -216,26 +246,64 @@ const VideoRecognition: React.FC = () => {
 
       simulateProgress(80, 2000);
 
+      console.log('🚀 Enviando video a:', `${API_BASE_URL}/api/v1/video/detect`);
+
       const response = await fetch(`${API_BASE_URL}/api/v1/video/detect`, {
         method: 'POST',
         body: formData,
+        signal: abortControllerRef.current.signal,
+        headers: {
+          'ngrok-skip-browser-warning': 'true'
+        }
       });
 
       if (!response.ok) {
-        throw new Error(`Error HTTP: ${response.status}`);
+        const errorText = await response.text();
+        console.error('❌ Error de respuesta:', response.status, errorText);
+        throw new Error(`Error HTTP ${response.status}: ${errorText}`);
+      }
+
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        const responseText = await response.text();
+        console.error('❌ Respuesta no es JSON:', responseText);
+        throw new Error('La respuesta del servidor no es válida');
       }
 
       const data: VideoDetectionResponse = await response.json();
+      console.log('✅ Respuesta recibida:', data);
+
       setProgress(100);
 
       if (data.success) {
-        // Manejo robusto de respuesta anidada o directa
+        // Manejo robusto de respuesta anidada o directa con validaciones seguras
         const uniquePlates = data.data?.unique_plates || data.unique_plates || [];
-        const processingSummary = data.data?.processing_summary || data.processing_summary;
-        const videoInfoData = data.data?.video_info || data.video_info;
-        const resultUrls = data.data?.result_urls || data.result_urls;
-        const enhancementData = data.data?.enhancement_info || data.enhancement_info;
+        const processingSummary = data.data?.processing_summary || data.processing_summary || null;
+        const videoInfoData = data.data?.video_info || data.video_info || null;
+        const resultUrls = data.data?.result_urls || data.result_urls || null;
+        const enhancementData = data.data?.enhancement_info || data.enhancement_info || null;
         const processingTimeData = data.data?.processing_time || 0;
+
+        // Log para debugging de la estructura de datos
+        console.log('🔍 Estructura de data completa:', data);
+        console.log('📹 Video info extraído:', videoInfoData);
+        console.log('📊 Processing summary extraído:', processingSummary);
+
+        // Verificar si hay video_info en la estructura anidada
+        if (data.data && typeof data.data === 'object') {
+          console.log('🔍 Claves en data.data:', Object.keys(data.data));
+          if (data.data.video_info) {
+            console.log('📹 Video info encontrado en data.data:', data.data.video_info);
+          }
+        }
+
+        // Verificar si hay video_info directamente
+        if (data.video_info) {
+          console.log('📹 Video info encontrado directamente:', data.video_info);
+        }
+
+        console.log('📊 Placas encontradas:', uniquePlates.length);
+        console.log('📈 Stats:', processingSummary);
 
         setResults(uniquePlates);
         setProcessingStats(processingSummary || null);
@@ -252,14 +320,22 @@ const VideoRecognition: React.FC = () => {
           description: `${uniquePlates.length} placas detectadas${sixCharCount > 0 ? ` (${sixCharCount} con 6 caracteres válidos)` : ''}`
         });
       } else {
-        setError(data.message || 'Error desconocido en el procesamiento');
+        const errorMsg = data.message || 'Error desconocido en el procesamiento';
+        console.error('❌ Error en procesamiento:', errorMsg);
+        setError(errorMsg);
         toast.error('Error en el procesamiento', {
-          description: data.message || 'No se pudo procesar el video'
+          description: errorMsg
         });
       }
 
     } catch (err) {
-      console.error('Error al procesar video:', err);
+      console.error('💥 Error completo:', err);
+
+      if (err instanceof Error && err.name === 'AbortError') {
+        console.log('🛑 Procesamiento cancelado');
+        return;
+      }
+
       const errorMessage = err instanceof Error ? err.message : 'Error de conexión con el servidor';
       setError(errorMessage);
       toast.error('Error de conexión', {
@@ -269,12 +345,19 @@ const VideoRecognition: React.FC = () => {
       setIsProcessing(false);
       if (progressIntervalRef.current) {
         clearInterval(progressIntervalRef.current);
+        progressIntervalRef.current = null;
       }
     }
-  }, [selectedFile, resetResults, simulateProgress]);
+  }, [selectedFile, isProcessing, resetResults, simulateProgress, API_BASE_URL]);
 
   const handleQuickProcess = useCallback(async () => {
-    if (!selectedFile) return;
+    if (!selectedFile || isProcessing) return;
+
+    // Cancelar cualquier proceso anterior
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
 
     setIsProcessing(true);
     resetResults();
@@ -288,16 +371,25 @@ const VideoRecognition: React.FC = () => {
       formData.append('frame_skip', '5');
       formData.append('max_duration', '60');
 
+      console.log('⚡ Enviando para detección rápida...');
+
       const response = await fetch(`${API_BASE_URL}/api/v1/video/detect/quick`, {
         method: 'POST',
         body: formData,
+        signal: abortControllerRef.current.signal,
+        headers: {
+          'ngrok-skip-browser-warning': 'true'
+        }
       });
 
       if (!response.ok) {
-        throw new Error(`Error HTTP: ${response.status}`);
+        const errorText = await response.text();
+        console.error('❌ Error en detección rápida:', response.status, errorText);
+        throw new Error(`Error HTTP ${response.status}: ${errorText}`);
       }
 
       const data: QuickVideoResponse = await response.json();
+      console.log('⚡ Respuesta rápida:', data);
 
       if (data.success && data.best_plate_text) {
         const quickResult: UniquePlate = {
@@ -325,14 +417,21 @@ const VideoRecognition: React.FC = () => {
           description: data.best_plate_text ? `Placa encontrada: ${data.best_plate_text}` : 'No se detectaron placas'
         });
       } else {
-        setError(data.message || 'No se detectaron placas en el video');
+        const errorMsg = data.message || 'No se detectaron placas en el video';
+        setError(errorMsg);
         toast.warning('Sin resultados', {
           description: 'No se detectaron placas válidas en el video'
         });
       }
 
     } catch (err) {
-      console.error('Error en detección rápida:', err);
+      console.error('💥 Error en detección rápida:', err);
+
+      if (err instanceof Error && err.name === 'AbortError') {
+        console.log('🛑 Detección rápida cancelada');
+        return;
+      }
+
       const errorMessage = err instanceof Error ? err.message : 'Error de conexión con el servidor';
       setError(errorMessage);
       toast.error('Error en detección rápida', {
@@ -341,10 +440,10 @@ const VideoRecognition: React.FC = () => {
     } finally {
       setIsProcessing(false);
     }
-  }, [selectedFile, resetResults, simulateProgress]);
+  }, [selectedFile, isProcessing, resetResults, simulateProgress, API_BASE_URL]);
 
   const handleVideoTimeUpdate = useCallback(() => {
-    if (videoRef.current) {
+    if (videoRef.current && !isNaN(videoRef.current.currentTime) && !isNaN(videoRef.current.duration)) {
       setCurrentTime(videoRef.current.currentTime);
       setDuration(videoRef.current.duration || 0);
     }
@@ -355,7 +454,9 @@ const VideoRecognition: React.FC = () => {
       if (isPlaying) {
         videoRef.current.pause();
       } else {
-        videoRef.current.play().catch(console.error);
+        videoRef.current.play().catch(err => {
+          console.error('Error reproduciendo video:', err);
+        });
       }
       setIsPlaying(!isPlaying);
     }
@@ -366,42 +467,58 @@ const VideoRecognition: React.FC = () => {
   }, []);
 
   const resetForm = useCallback(() => {
+    // Cancelar procesamiento en curso
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    // Limpiar URL del video
+    if (selectedVideo) {
+      URL.revokeObjectURL(selectedVideo);
+    }
+
     setSelectedFile(null);
     setSelectedVideo(null);
+    setIsProcessing(false);
     resetResults();
-  }, [resetResults]);
+  }, [selectedVideo, resetResults]);
 
   const formatTime = useCallback((seconds: number): string => {
-    if (!isFinite(seconds)) return '0:00';
+    if (!isFinite(seconds) || isNaN(seconds)) return '0:00';
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   }, []);
 
   const exportResults = useCallback(() => {
-    const exportData = {
-      timestamp: new Date().toISOString(),
-      video_info: videoInfo,
-      processing_stats: processingStats,
-      enhancement_info: enhancementInfo,
-      processing_time: processingTime,
-      unique_plates: results,
-      total_unique_plates: results.length,
-      six_char_plates: results.filter(p => p.is_six_char_valid).length,
-      valid_plates: results.filter(p => p.is_valid_format).length
-    };
+    try {
+      const exportData = {
+        timestamp: new Date().toISOString(),
+        video_info: videoInfo,
+        processing_stats: processingStats,
+        enhancement_info: enhancementInfo,
+        processing_time: processingTime,
+        unique_plates: results,
+        total_unique_plates: results.length,
+        six_char_plates: results.filter(p => p.is_six_char_valid).length,
+        valid_plates: results.filter(p => p.is_valid_format).length
+      };
 
-    const blob = new Blob([JSON.stringify(exportData, null, 2)], {
-      type: 'application/json'
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `video_detecciones_${Date.now()}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], {
+        type: 'application/json'
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `video_detecciones_${Date.now()}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Error exportando resultados:', err);
+      toast.error('Error al exportar resultados');
+    }
   }, [videoInfo, processingStats, enhancementInfo, processingTime, results]);
 
   // Helper functions con tipos explícitos
@@ -440,9 +557,9 @@ const VideoRecognition: React.FC = () => {
     return `${mb.toFixed(2)} MB`;
   }, []);
 
-  // Filtros calculados
-  const validPlates = results.filter(p => p.is_valid_format);
-  const sixCharPlates = results.filter(p => p.is_six_char_valid);
+  // Filtros calculados de forma segura
+  const validPlates = results?.filter(p => p.is_valid_format) || [];
+  const sixCharPlates = results?.filter(p => p.is_six_char_valid) || [];
 
   return (
       <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-800">
@@ -483,7 +600,7 @@ const VideoRecognition: React.FC = () => {
             {/* Error Message */}
             {error && (
                 <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 rounded-lg flex items-center space-x-3">
-                  <AlertCircle className="w-5 h-5 text-red-400" />
+                  <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0" />
                   <span className="text-red-400">{error}</span>
                 </div>
             )}
@@ -541,7 +658,7 @@ const VideoRecognition: React.FC = () => {
                           <Button
                               onClick={handleProcess}
                               disabled={isProcessing}
-                              className="bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-700 hover:to-blue-700 text-white"
+                              className="bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-700 hover:to-blue-700 text-white disabled:opacity-50"
                           >
                             {isProcessing ? (
                                 <>
@@ -559,7 +676,7 @@ const VideoRecognition: React.FC = () => {
                           <Button
                               onClick={handleQuickProcess}
                               disabled={isProcessing}
-                              className="bg-gradient-to-r from-blue-600 to-green-600 hover:from-blue-700 hover:to-green-700 text-white"
+                              className="bg-gradient-to-r from-blue-600 to-green-600 hover:from-blue-700 hover:to-green-700 text-white disabled:opacity-50"
                           >
                             {isProcessing ? (
                                 <>
@@ -578,7 +695,8 @@ const VideoRecognition: React.FC = () => {
                         <Button
                             onClick={resetForm}
                             size="sm"
-                            className="w-full bg-white/10 text-white border border-white/30 hover:bg-blue-600/70 hover:text-white hover:border-blue-400"
+                            disabled={isProcessing}
+                            className="w-full bg-white/10 text-white border border-white/30 hover:bg-blue-600/70 hover:text-white hover:border-blue-400 disabled:opacity-50"
                         >
                           Cambiar Video
                         </Button>
@@ -595,7 +713,7 @@ const VideoRecognition: React.FC = () => {
                         <div className="w-full bg-white/10 rounded-full h-2">
                           <div
                               className="bg-gradient-to-r from-green-500 to-blue-500 h-2 rounded-full transition-all duration-300"
-                              style={{ width: `${progress}%` }}
+                              style={{ width: `${Math.min(progress, 100)}%` }}
                           />
                         </div>
                         <p className="text-gray-400 text-xs mt-2">
@@ -645,6 +763,12 @@ const VideoRecognition: React.FC = () => {
                               onTimeUpdate={handleVideoTimeUpdate}
                               onPlay={() => setIsPlaying(true)}
                               onPause={() => setIsPlaying(false)}
+                              onLoadedData={() => {
+                                console.log('✅ Video cargado correctamente');
+                              }}
+                              onError={(e) => {
+                                console.error('❌ Error cargando video:', e);
+                              }}
                               tabIndex={0}
                           />
                           {annotatedVideoUrl && (
@@ -652,10 +776,10 @@ const VideoRecognition: React.FC = () => {
                                 Video Anotado
                               </div>
                           )}
-                          {enhancementInfo?.roi_enabled && (
+                          {enhancementInfo && (
                               <div className="absolute top-2 left-2 bg-purple-600/80 text-white px-2 py-1 rounded text-xs flex items-center space-x-1">
                                 <Shield className="w-3 h-3" />
-                                <span>ROI {enhancementInfo.roi_percentage}%</span>
+                                <span>ROI {enhancementInfo.roi_percentage || 10}%</span>
                               </div>
                           )}
                         </div>
@@ -693,14 +817,14 @@ const VideoRecognition: React.FC = () => {
                       <div className="flex items-center space-x-4">
                         {processingStats && (
                             <span className="text-sm text-gray-400">
-                        {processingStats.frames_processed} frames procesados
+                        {processingStats.frames_processed || 0} frames procesados
                       </span>
                         )}
                         {enhancementInfo && (
                             <div className="flex items-center space-x-2 bg-purple-500/20 border border-purple-500/30 rounded px-2 py-1">
                               <Shield className="w-3 h-3 text-purple-400" />
                               <span className="text-xs text-purple-400">
-                          ROI {enhancementInfo.roi_percentage}% + 6 chars
+                          ROI {enhancementInfo.roi_percentage || 10}% + 6 chars
                         </span>
                             </div>
                         )}
@@ -737,13 +861,13 @@ const VideoRecognition: React.FC = () => {
                                 </div>
                                 <div className="bg-white/5 rounded-lg p-4 text-center">
                                   <Film className="w-6 h-6 text-purple-400 mx-auto mb-2" />
-                                  <p className="text-2xl font-bold text-white">{processingStats.frames_processed}</p>
+                                  <p className="text-2xl font-bold text-white">{processingStats?.frames_processed || 0}</p>
                                   <p className="text-gray-400 text-sm">Frames</p>
                                 </div>
                                 <div className="bg-white/5 rounded-lg p-4 text-center">
                                   <Clock className="w-6 h-6 text-orange-400 mx-auto mb-2" />
                                   <p className="text-2xl font-bold text-white">
-                                    {videoInfo ? `${videoInfo.duration_seconds.toFixed(1)}s` : '-'}
+                                    {videoInfo?.duration_seconds ? `${videoInfo.duration_seconds.toFixed(1)}s` : '-'}
                                   </p>
                                   <p className="text-gray-400 text-sm">Duración</p>
                                 </div>
@@ -891,7 +1015,7 @@ const VideoRecognition: React.FC = () => {
                                   )}
                                   {enhancementInfo && (
                                       <p className="text-purple-400">
-                                        🎯 Procesado con ROI central ({enhancementInfo.roi_percentage}%) y filtro de 6 caracteres
+                                        🎯 Procesado con ROI central ({enhancementInfo.roi_percentage || 10}%) y filtro de 6 caracteres
                                       </p>
                                   )}
                                   {processingTime > 0 && (
@@ -901,13 +1025,15 @@ const VideoRecognition: React.FC = () => {
                                   )}
                                 </div>
                               </div>
-                              <Button
-                                  onClick={exportResults}
-                                  className="bg-green-600 hover:bg-green-700 text-white"
-                              >
-                                <Download className="w-4 h-4 mr-2" />
-                                Exportar
-                              </Button>
+                              {results.length > 0 && (
+                                  <Button
+                                      onClick={exportResults}
+                                      className="bg-green-600 hover:bg-green-700 text-white"
+                                  >
+                                    <Download className="w-4 h-4 mr-2" />
+                                    Exportar
+                                  </Button>
+                              )}
                             </div>
                           </div>
                         </div>
